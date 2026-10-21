@@ -1369,7 +1369,7 @@
 	Use environment	Використати змінні середовища
 	Empty fields use CADCRAFT_AI_BASE_URL, CADCRAFT_AI_MODEL, CADCRAFT_AI_KEY (or OPENAI_API_KEY) and CADCRAFT_AI_VISION. Any OpenAI-compatible endpoint works: Ollama, LM Studio, OpenAI, OpenRouter, vLLM. The API key is kept in your system's credential store; the rest is saved with your preferences on this computer, never in a drawing.	Порожні поля беруть значення з CADCRAFT_AI_BASE_URL, CADCRAFT_AI_MODEL, CADCRAFT_AI_KEY (або OPENAI_API_KEY) та CADCRAFT_AI_VISION. Підійде будь-яка OpenAI-сумісна кінцева точка: Ollama, LM Studio, OpenAI, OpenRouter, vLLM. Ключ API зберігається в системному сховищі облікових даних; решта — разом з вашими налаштуваннями на цьому комп'ютері, ніколи — у кресленні.
 	Ask the Assistant to draw or change something	Попросіть асистента щось накреслити або змінити
-	Stopping…	Зупинка…
+	Stopped	Зупинено
 	Working…	Працюю…
 	Auto	Авто
 	Image input	Передавання зображень
@@ -1412,3 +1412,11 @@
 	Attach PDF Underlay	Приєднати підкладку PDF
 	Raster Image Reference...	Посилання на растрове зображення...
 	PDF Underlay...	Підкладка PDF...
+	Attach DWF Underlay	Приєднати підкладку DWF
+	Attach DGN Underlay	Приєднати підкладку DGN
+	DWF Underlay...	Підкладка DWF...
+	DGN Underlay...	Підкладка DGN...
+	Forget learned placements	Забути вивчені розміщення
+	Drop the placements and recently used blocks learned in all drawings.	Скинути розміщення та нещодавно використані блоки, вивчені в усіх кресленнях.
+	Pick Base Point	Вказати базову точку
+	Forget Learned Placements	Забути вивчені розміщення

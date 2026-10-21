@@ -7,11 +7,11 @@ use cadcraft_engine::doc::geom::Vec3;
 use cadcraft_engine::doc::{Circle, EntityKind, Handle, Line};
 use cadcraft_engine::geom::Vec2;
 use cadcraft_engine::{Input, Session};
-use cadcraft_ui_egui::{CadApp, Services, docking::Panel};
+use cadcraft_ui_egui::{CadApp, Services, blocks_palette, docking::Panel};
 use egui::vec2;
 use egui_kittest::Harness;
 use egui_kittest::kittest::Queryable;
-use serde_json::json;
+use serde_json::{Value, json};
 
 fn harness(mut app: CadApp) -> Harness<'static, CadApp> {
     app.ui.in_window_menu = false;
@@ -158,18 +158,17 @@ fn the_count_follows_include_existing_blocks() {
 #[test]
 fn the_base_point_is_picked_on_the_drawing_and_a_cancelled_pick_keeps_the_dialog() {
     let (mut app, _) = app_with_two_copies();
-    app.session.last_point = Vec2::new(7.0, 8.0);
     app.cmdline("bconvert");
     let mut h = harness(app);
     h.get_by_label("Pick point").click();
     h.run_steps(2);
     assert!(h.state().session.running.is_some(), "the point prompt is on the command line");
+    assert!(h.state().session.prompt_text().contains("Specify base point"), "{}", h.state().session.prompt_text());
     assert_eq!(h.state().ui.dialog, None, "the dialog steps aside");
     h.state_mut().session.input(Input::Cancel).unwrap();
     h.run_steps(3);
     assert_eq!(h.state().ui.dialog.as_deref(), Some("bconvert"));
-    assert_eq!(h.state().smart.convert.as_ref().unwrap().base, None);
-    assert_eq!(h.state().session.last_point, Vec2::new(7.0, 8.0), "LASTPOINT is as it was");
+    assert_eq!(h.state().smart.convert.as_ref().unwrap().base, None, "Esc changes nothing");
 
     h.get_by_label("Pick point").click();
     h.run_steps(2);
@@ -178,6 +177,13 @@ fn the_base_point_is_picked_on_the_drawing_and_a_cancelled_pick_keeps_the_dialog
     assert_eq!(h.state().ui.dialog.as_deref(), Some("bconvert"));
     assert_eq!(h.state().smart.convert.as_ref().unwrap().base, Some(Vec2::new(2.0, 1.0)));
     h.get_by_label("2.0000, 1.0000");
+    // Esc on a later pick keeps the point already picked.
+    h.get_by_label("Pick point").click();
+    h.run_steps(2);
+    h.state_mut().session.input(Input::Cancel).unwrap();
+    h.run_steps(3);
+    assert_eq!(h.state().ui.dialog.as_deref(), Some("bconvert"));
+    assert_eq!(h.state().smart.convert.as_ref().unwrap().base, Some(Vec2::new(2.0, 1.0)));
     h.get_by_label("OK").click();
     h.run_steps(3);
     let at = references(h.state()).into_iter().map(|r| r.1).find(|at| at.near(Vec2::new(2.0, 1.0), 1e-9));
@@ -345,4 +351,80 @@ fn inserting_from_the_palette_follows_the_placement_suggestion_when_it_is_on() {
     }
     let plain = references(h.state()).pop().unwrap();
     assert!(plain.1.near(Vec2::new(1.3, 3.1), 1e-9) && plain.2.abs() < 1e-9, "{plain:?}");
+}
+
+/// Walls y = 0 and y = 5 and the block DOOR; with `teach`, two doors on the lower wall, turned 90°.
+fn walls_and_door(app: &mut CadApp, teach: bool) {
+    let door = shape(app, 0.0, 1.0, (50.0, 50.0));
+    define(app, "DOOR", &door);
+    for (a, b) in [([0, 0], [10, 0]), ([0, 5], [10, 5])] {
+        app.session.execute("line", &json!({ "points": [a, b] })).unwrap();
+    }
+    if teach {
+        for x in [2.0, 6.0] {
+            app.session.execute("insert", &json!({ "name": "DOOR", "at": [x, 0.25], "rotation": 90 })).unwrap();
+        }
+    }
+}
+
+fn suggested_door(app: &mut CadApp) -> Value {
+    app.session.execute("insert", &json!({ "name": "DOOR", "at": [4.4, 5.9], "suggest": true })).unwrap()
+}
+
+#[test]
+fn learned_placements_survive_a_prefs_round_trip_and_drive_a_suggestion_in_a_new_drawing() {
+    let mut app = CadApp::new(Session::new(), Services::default());
+    walls_and_door(&mut app, true);
+    let prefs = app.prefs_json();
+    assert!(serde_json::from_str::<Value>(&prefs).unwrap()["smartBlocks"].is_array());
+
+    // The next run: loaded prefs, a new drawing with the block and walls but no doors.
+    let mut next = CadApp::new(Session::new(), Services::default());
+    next.load_prefs(&prefs);
+    assert_eq!(next.session.recent_blocks(5), ["DOOR"]);
+    walls_and_door(&mut next, false);
+    let r = suggested_door(&mut next);
+    assert_eq!(r["suggested"], true);
+    let snapped = references(&next).pop().unwrap();
+    assert!(snapped.1.near(Vec2::new(4.4, 5.25), 1e-9) && (snapped.2 - 90f64.to_radians()).abs() < 1e-9, "{snapped:?}");
+
+    // Without the prefs nothing is known.
+    let mut blank = CadApp::new(Session::new(), Services::default());
+    walls_and_door(&mut blank, false);
+    assert_eq!(suggested_door(&mut blank)["suggested"], false);
+    // Malformed stored data is ignored.
+    blank.load_prefs(r#"{"smartBlocks": {"x": [1, 2, 3]}}"#);
+    assert!(blank.session.recent_blocks(5).is_empty());
+}
+
+#[test]
+fn forget_learned_placements_clears_them_from_the_session_and_the_prefs() {
+    let mut app = CadApp::new(Session::new(), Services::default());
+    walls_and_door(&mut app, true);
+    let prefs = app.prefs_json();
+    let mut next = CadApp::new(Session::new(), Services::default());
+    next.load_prefs(&prefs);
+    walls_and_door(&mut next, false);
+    next.cmdline("blockspalette");
+    let mut h = harness(next);
+    h.get_by_label("Forget learned placements").click();
+    h.run_steps(3);
+    assert!(h.state().session.recent_blocks(5).is_empty());
+    assert!(serde_json::from_str::<Value>(&h.state().prefs_json()).unwrap().get("smartBlocks").is_none());
+    assert_eq!(suggested_door(h.state_mut())["suggested"], false, "the drawing has no doors and nothing is remembered");
+}
+
+#[test]
+fn recently_inserted_blocks_rank_nearer_in_the_palette_suggestions() {
+    let (mut app, _) = app_with_blocks();
+    let sel = shape(&mut app, 70.0, 2.0, (200.0, 100.0));
+    app.session.set_selection(sel);
+    let before = blocks_palette::suggestions(&mut app);
+    let far = before.iter().find(|(n, _)| n == "FAR").map(|(_, d)| *d).unwrap();
+    // FAR was used in another drawing.
+    app.session.load_placements(&json!([{ "name": "far" }]));
+    let after = blocks_palette::suggestions(&mut app);
+    let boosted = after.iter().find(|(n, _)| n == "FAR").map(|(_, d)| *d).unwrap();
+    assert!(boosted < far && (boosted - far * 0.75).abs() < 1e-12, "{before:?} {after:?}");
+    assert!(after.windows(2).all(|w| w[0].1 <= w[1].1), "still best first: {after:?}");
 }

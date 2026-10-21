@@ -255,6 +255,33 @@ fn the_answer_shows_while_it_streams_and_a_long_one_is_cut_until_show_more() {
 }
 
 #[test]
+fn stop_ends_a_streaming_request_at_once_and_later_chunks_are_ignored() {
+    let url = serve_raw(vec![(
+        "text/event-stream",
+        vec![(sse_line(json!({"content": "Hel"})), 0), (sse_line(json!({"content": "LATE"})), 2500), (b"data: [DONE]\n\n".to_vec(), 0)],
+    )]);
+    let mut h = harness(app_with(&Mem::default()), &url);
+    ask(&mut h, "hi");
+    let start = Instant::now();
+    while h.query_by_label("Hel").is_none() {
+        h.run_steps(1);
+        assert!(start.elapsed() < Duration::from_secs(20), "nothing streamed");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let clicked = Instant::now();
+    h.get_by_label("Stop").click();
+    h.run_steps(2);
+    assert!(!h.state().assistant.running(), "still running after Stop");
+    assert!(clicked.elapsed() < Duration::from_millis(200), "{:?}", clicked.elapsed());
+    h.get_by_label("Stopped");
+    // The slow chunk arrives after Stop and must not show up.
+    std::thread::sleep(Duration::from_millis(2800));
+    h.run_steps(3);
+    assert!(h.query_by_label_contains("LATE").is_none(), "a chunk after Stop was shown");
+    assert!(!h.state().assistant.running());
+}
+
+#[test]
 fn an_unreachable_endpoint_is_reported_in_the_transcript() {
     let mut h = harness(app_with(&Mem::default()), "http://127.0.0.1:1/v1");
     ask(&mut h, "hello");

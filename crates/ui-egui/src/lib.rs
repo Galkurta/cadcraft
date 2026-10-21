@@ -391,6 +391,9 @@ impl CadApp {
         if !self.ui.recent_files.is_empty() {
             prefs["recentFiles"] = json!(self.ui.recent_files);
         }
+        if !self.session.recent_blocks(1).is_empty() {
+            prefs["smartBlocks"] = self.session.placements_json();
+        }
         if let Some(a) = self.assistant.prefs_value() {
             prefs["assistant"] = a;
         }
@@ -423,6 +426,9 @@ impl CadApp {
         }
         if let Some(files) = v.get("recentFiles").and_then(Value::as_array) {
             self.ui.recent_files = files.iter().filter_map(Value::as_str).filter(|p| !p.is_empty()).take(RECENT_FILES).map(str::to_string).collect();
+        }
+        if let Some(p) = v.get("smartBlocks") {
+            self.session.load_placements(p);
         }
     }
 

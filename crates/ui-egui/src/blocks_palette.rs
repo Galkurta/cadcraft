@@ -34,27 +34,41 @@ pub fn block_names(d: &Drawing) -> Vec<String> {
     names
 }
 
-/// The blocks most like the selection, best first (empty when nothing is selected), cached per
+/// How many of the most recently inserted blocks (in any drawing) rank higher.
+const RECENT: usize = 10;
+/// The distance of a recently inserted block is scaled by this: it ranks nearer.
+const RECENT_BOOST: f64 = 0.75;
+
+/// The blocks most like the selection, best first (empty when nothing is selected); blocks
+/// inserted recently, in this or another drawing, rank nearer. BREPLACE's ranking is cached per
 /// drawing revision and selection.
-fn suggested(app: &mut CadApp, uid: u64, revision: u64) -> Vec<(String, f64)> {
+pub fn suggestions(app: &mut CadApp) -> Vec<(String, f64)> {
+    let Ok((uid, revision)) = app.session.state().map(|s| (s.uid, s.revision)) else { return Vec::new() };
     let selection: Vec<String> = app.session.selection().iter().map(|h| h.hex()).collect();
     let key = (uid, revision, selection);
-    if let Some((k, r)) = &app.smart.suggested
-        && *k == key
-    {
-        return r.clone();
+    let cached = app.smart.suggested.as_ref().filter(|(k, _)| *k == key).map(|(_, r)| r.clone());
+    let mut ranking = cached.unwrap_or_else(|| {
+        let ranking: Vec<(String, f64)> = if key.2.is_empty() {
+            Vec::new()
+        } else {
+            app.session
+                .execute("breplace", &json!({ "handles": key.2, "shapes": true }))
+                .ok()
+                .and_then(|r| r["ranking"].as_array().cloned())
+                .map(|a| a.iter().filter_map(|e| Some((e["name"].as_str()?.to_string(), e["distance"].as_f64()?))).collect())
+                .unwrap_or_default()
+        };
+        app.smart.suggested = Some((key, ranking.clone()));
+        ranking
+    });
+    let recent = app.session.recent_blocks(RECENT);
+    for (name, d) in &mut ranking {
+        if recent.iter().any(|r| r.eq_ignore_ascii_case(name)) {
+            *d *= RECENT_BOOST;
+        }
     }
-    let ranking = if key.2.is_empty() {
-        Vec::new()
-    } else {
-        app.session
-            .execute("breplace", &json!({ "handles": key.2, "shapes": true }))
-            .ok()
-            .and_then(|r| r["ranking"].as_array().cloned())
-            .map(|a| a.iter().filter_map(|e| Some((e["name"].as_str()?.to_string(), e["distance"].as_f64()?))).take(SUGGESTED).collect())
-            .unwrap_or_default()
-    };
-    app.smart.suggested = Some((key, ranking.clone()));
+    ranking.sort_by(|a, b| a.1.total_cmp(&b.1));
+    ranking.truncate(SUGGESTED);
     ranking
 }
 
@@ -77,7 +91,9 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
         return;
     };
     let names = block_names(&doc);
-    let near = suggested(app, uid, revision);
+    let near = suggestions(app);
+    let learned = !app.session.recent_blocks(1).is_empty();
+    let mut forget = false;
     let mut thumbs = std::mem::take(&mut app.smart.thumbs);
     let mut pick: Option<String> = None;
     let mut row = |ui: &mut egui::Ui, name: &str, note: Option<String>| {
@@ -96,6 +112,13 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
         ui.add_space(4.0);
         ui.checkbox(&mut app.smart.suggest_placement, crate::tl!("Suggest placement"))
             .on_hover_text(crate::tl!("Insert follows how the block's other references sit on the walls."));
+        if ui
+            .add_enabled(learned, egui::Button::new(crate::tl!("Forget learned placements")).small())
+            .on_hover_text(crate::tl!("Drop the placements and recently used blocks learned in all drawings."))
+            .clicked()
+        {
+            forget = true;
+        }
         if !near.is_empty() {
             ui.add_space(4.0);
             ui.label(RichText::new(crate::tl!("Suggested")).strong());
@@ -113,6 +136,9 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
         }
     });
     app.smart.thumbs = thumbs;
+    if forget && let Err(e) = app.run("bforget", json!({})) {
+        app.session.echo(e);
+    }
     if let Some(name) = pick {
         let suggest = app.smart.suggest_placement;
         insert(app, &name, suggest);

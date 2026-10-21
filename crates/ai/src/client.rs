@@ -37,6 +37,9 @@ pub struct Config {
     pub model: String,
     pub api_key: String,
     pub vision: Vision,
+    /// The request ends with an error when a streamed reply pauses this long (milliseconds;
+    /// 0 = 60 seconds).
+    pub idle_timeout_ms: u64,
 }
 
 /// Where a local Ollama listens.
@@ -53,6 +56,7 @@ impl Config {
             model: var("CADCRAFT_AI_MODEL").unwrap_or_default(),
             api_key: var("CADCRAFT_AI_KEY").or_else(|| var("OPENAI_API_KEY")).unwrap_or_default(),
             vision: var("CADCRAFT_AI_VISION").and_then(|v| Vision::parse(&v)).unwrap_or_default(),
+            idle_timeout_ms: 0,
         }
     }
 }
@@ -357,7 +361,7 @@ impl Exchange {
         if cfg.model.trim().is_empty() {
             return Err(AiError::Config("no AI model set: set CADCRAFT_AI_MODEL or fill in the Assistant settings".into()));
         }
-        let flight = transport::start(cfg, &request_body(cfg, messages, tools, opts), wake)?;
+        let flight = transport::start(cfg, &request_body(cfg, messages, tools, opts), opts.stream, wake)?;
         Ok(Exchange { flight, parser: Some(Parser::new()), status: None, error_body: Vec::new(), streamed: false })
     }
 

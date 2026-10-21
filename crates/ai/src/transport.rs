@@ -18,6 +18,8 @@ pub const MAX_REPLY_BYTES: usize = 8 << 20;
 const TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
 #[cfg(target_arch = "wasm32")]
 const TIMEOUT_MS: i32 = 300_000;
+/// Without a byte from the server for this long the request ends with an error.
+pub const DEFAULT_IDLE_MS: u64 = 60_000;
 
 #[derive(Default)]
 struct Shared {
@@ -26,6 +28,9 @@ struct Shared {
     total: usize,
     finished: Option<Result<(), String>>,
     cancelled: bool,
+    /// Web: Stop aborts the `fetch` at once, not at its next chunk.
+    #[cfg(target_arch = "wasm32")]
+    abort: Option<web_sys::AbortController>,
 }
 
 fn lock(m: &Mutex<Shared>) -> MutexGuard<'_, Shared> {
@@ -49,9 +54,15 @@ impl Flight {
         Drained { status: s.status, data: std::mem::take(&mut s.data), finished: s.finished.clone() }
     }
 
-    /// Give up: the request's thread stops at its next chunk.
+    /// Give up: the reader stops at once (web: the `fetch` is aborted; native: its watcher returns
+    /// and ignores whatever the socket delivers later).
     pub fn cancel(&self) {
-        lock(&self.0).cancelled = true;
+        let mut s = lock(&self.0);
+        s.cancelled = true;
+        #[cfg(target_arch = "wasm32")]
+        if let Some(a) = &s.abort {
+            a.abort();
+        }
     }
 }
 
@@ -62,6 +73,10 @@ struct Sink {
 }
 
 impl Sink {
+    fn cancelled(&self) -> bool {
+        lock(&self.shared).cancelled
+    }
+
     fn status(&self, status: u16) {
         lock(&self.shared).status = Some(status);
     }
@@ -96,8 +111,10 @@ impl Drop for Sink {
     }
 }
 
-/// POST `body` to `{base_url}/chat/completions`. Returns at once; poll the [`Flight`].
-pub fn start(cfg: &Config, body: &Value, wake: Wake) -> Result<Flight, AiError> {
+/// POST `body` to `{base_url}/chat/completions`. Returns at once; poll the [`Flight`]. `stream`:
+/// the reply is an event stream, so a pause of [`DEFAULT_IDLE_MS`] means the server is stuck; a
+/// one-piece reply may legitimately take minutes and gets the whole-exchange timeout instead.
+pub fn start(cfg: &Config, body: &Value, stream: bool, wake: Wake) -> Result<Flight, AiError> {
     let base = cfg.base_url.trim().trim_end_matches('/');
     if !(base.starts_with("http://") || base.starts_with("https://")) {
         return Err(AiError::Config(format!("the AI base URL `{base}` must start with http:// or https://")));
@@ -105,24 +122,71 @@ pub fn start(cfg: &Config, body: &Value, wake: Wake) -> Result<Flight, AiError> 
     let shared = Arc::new(Mutex::new(Shared::default()));
     let sink = Sink { shared: shared.clone(), wake };
     let (url, key, body) = (format!("{base}/chat/completions"), cfg.api_key.clone(), body.to_string());
-    spawn(url, key, body, sink)?;
+    let idle_ms = match cfg.idle_timeout_ms {
+        0 if stream => DEFAULT_IDLE_MS,
+        0 => 300_000,
+        ms => ms,
+    };
+    let idle = std::time::Duration::from_millis(idle_ms);
+    spawn(url, key, body, idle, sink)?;
     Ok(Flight(shared))
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn spawn(url: String, key: String, body: String, sink: Sink) -> Result<(), AiError> {
+enum Msg {
+    Status(u16),
+    Chunk(Vec<u8>),
+    Done(Result<(), String>),
+}
+
+/// Two threads: one blocks in `ureq`, the other watches it, so Stop and a silent server end the
+/// request on time. ponytail: a blocked socket read can't be interrupted; the reader thread is
+/// abandoned (its sends fail) and ends when the server answers or the global timeout hits.
+#[cfg(not(target_arch = "wasm32"))]
+fn spawn(url: String, key: String, body: String, idle: std::time::Duration, sink: Sink) -> Result<(), AiError> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    let err = |e: std::io::Error| AiError::Transport(e.to_string());
     std::thread::Builder::new()
         .name("ai-request".into())
         .spawn(move || {
-            let r = read_native(&url, &key, body, &sink);
-            sink.finish(r);
+            let r = read_native(&url, &key, body, &tx);
+            let _ = tx.send(Msg::Done(r));
         })
-        .map(drop)
-        .map_err(|e| AiError::Transport(e.to_string()))
+        .map_err(err)?;
+    std::thread::Builder::new().name("ai-watch".into()).spawn(move || watch(&rx, idle, sink)).map(drop).map_err(err)
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn read_native(url: &str, key: &str, body: String, sink: &Sink) -> Result<(), String> {
+fn watch(rx: &std::sync::mpsc::Receiver<Msg>, idle: std::time::Duration, sink: Sink) {
+    use std::sync::mpsc::RecvTimeoutError;
+    let mut last = std::time::Instant::now();
+    let result = loop {
+        if sink.cancelled() {
+            break Ok(());
+        }
+        match rx.recv_timeout(std::time::Duration::from_millis(20)) {
+            Ok(Msg::Status(s)) => sink.status(s),
+            Ok(Msg::Chunk(c)) => {
+                if !sink.push(&c) {
+                    break Ok(());
+                }
+            }
+            Ok(Msg::Done(r)) => break r,
+            Err(RecvTimeoutError::Timeout) => {
+                if last.elapsed() >= idle {
+                    break Err(format!("the server went silent: no data for {idle:?}"));
+                }
+                continue;
+            }
+            Err(RecvTimeoutError::Disconnected) => break Err("the request stopped unexpectedly".into()),
+        }
+        last = std::time::Instant::now();
+    };
+    sink.finish(result);
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn read_native(url: &str, key: &str, body: String, tx: &std::sync::mpsc::Sender<Msg>) -> Result<(), String> {
     use std::io::Read;
     let agent: ureq::Agent = ureq::Agent::config_builder()
         .timeout_global(Some(TIMEOUT))
@@ -135,28 +199,26 @@ fn read_native(url: &str, key: &str, body: String, sink: &Sink) -> Result<(), St
         req = req.header("Authorization", format!("Bearer {key}"));
     }
     let mut resp = req.send(body).map_err(|e| e.to_string())?;
-    sink.status(resp.status().as_u16());
-    // ponytail: a cancelled request is noticed at its next chunk; a silent server holds the thread
-    // until the global timeout. Fine for one-at-a-time chats.
+    tx.send(Msg::Status(resp.status().as_u16())).map_err(|e| e.to_string())?;
     let mut reader = resp.body_mut().with_config().limit(u64::MAX).reader();
     let mut buf = [0u8; 8192];
     loop {
         let n = reader.read(&mut buf).map_err(|e| e.to_string())?;
         match buf.get(..n) {
-            Some(chunk) if n > 0 => {
-                if !sink.push(chunk) {
-                    return Ok(());
-                }
-            }
+            // The watcher is gone (Stop, idle timeout): nobody wants more.
+            Some(chunk) if n > 0 => tx.send(Msg::Chunk(chunk.to_vec())).map_err(|e| e.to_string())?,
             _ => return Ok(()),
         }
     }
 }
 
 #[cfg(target_arch = "wasm32")]
-fn spawn(url: String, key: String, body: String, sink: Sink) -> Result<(), AiError> {
+fn spawn(url: String, key: String, body: String, idle: std::time::Duration, sink: Sink) -> Result<(), AiError> {
+    // The controller is in the shared state first, so Stop aborts the fetch from the first moment.
+    let abort = web_sys::AbortController::new().map_err(|e| AiError::Transport(js_err(e)))?;
+    lock(&sink.shared).abort = Some(abort.clone());
     wasm_bindgen_futures::spawn_local(async move {
-        let r = fetch(&url, &key, &body, &sink).await;
+        let r = fetch(&url, &key, &body, idle, &abort, &sink).await;
         sink.finish(r);
     });
     Ok(())
@@ -171,19 +233,31 @@ fn js_err(e: wasm_bindgen::JsValue) -> String {
 }
 
 #[cfg(target_arch = "wasm32")]
-async fn fetch(url: &str, key: &str, body: &str, sink: &Sink) -> Result<(), String> {
+async fn fetch(url: &str, key: &str, body: &str, idle: std::time::Duration, abort: &web_sys::AbortController, sink: &Sink) -> Result<(), String> {
+    use std::{cell::Cell, rc::Rc};
     use wasm_bindgen::{JsCast, JsValue, closure::Closure};
     use wasm_bindgen_futures::JsFuture;
-    use web_sys::{AbortController, Headers, ReadableStreamDefaultReader, Request, RequestInit, Response};
+    use web_sys::{Headers, ReadableStreamDefaultReader, Request, RequestInit, Response};
 
     let win = web_sys::window().ok_or("no browser window")?;
-    let abort = AbortController::new().map_err(js_err)?;
     // The whole exchange is cut off after TIMEOUT_MS, like the native client's global timeout.
     let on_timeout = Closure::once_into_js({
         let abort = abort.clone();
         move || abort.abort()
     });
     let timer = win.set_timeout_with_callback_and_timeout_and_arguments_0(on_timeout.unchecked_ref(), TIMEOUT_MS).ok();
+    // A server that goes silent: the idle timer is re-armed with every chunk and aborts the fetch.
+    let silent = Rc::new(Cell::new(false));
+    let on_idle = Closure::<dyn FnMut()>::new({
+        let (abort, silent) = (abort.clone(), silent.clone());
+        move || {
+            silent.set(true);
+            abort.abort();
+        }
+    });
+    let idle_ms = i32::try_from(idle.as_millis()).unwrap_or(i32::MAX);
+    let arm = || win.set_timeout_with_callback_and_timeout_and_arguments_0(on_idle.as_ref().unchecked_ref(), idle_ms).ok();
+    let mut idle_timer = arm();
     let result = async {
         let headers = Headers::new().map_err(js_err)?;
         headers.set("Content-Type", "application/json").map_err(js_err)?;
@@ -202,6 +276,9 @@ async fn fetch(url: &str, key: &str, body: &str, sink: &Sink) -> Result<(), Stri
         let reader: ReadableStreamDefaultReader = stream.get_reader().dyn_into().map_err(|_| "no stream reader")?;
         loop {
             let chunk = JsFuture::from(reader.read()).await.map_err(js_err)?;
+            if let Some(t) = idle_timer.take() {
+                win.clear_timeout_with_handle(t);
+            }
             let done = js_sys::Reflect::get(&chunk, &"done".into()).ok().and_then(|d| d.as_bool()).unwrap_or(true);
             if done {
                 return Ok(());
@@ -211,11 +288,18 @@ async fn fetch(url: &str, key: &str, body: &str, sink: &Sink) -> Result<(), Stri
                 abort.abort();
                 return Ok(());
             }
+            idle_timer = arm();
         }
     }
     .await;
     if let Some(t) = timer {
         win.clear_timeout_with_handle(t);
+    }
+    if sink.cancelled() {
+        return Ok(());
+    }
+    if silent.get() {
+        return Err(format!("the server went silent: no data for {idle:?}"));
     }
     result
 }

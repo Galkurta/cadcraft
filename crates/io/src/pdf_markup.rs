@@ -9,13 +9,13 @@
 //! `crypt`), a damaged or missing xref rebuilt by scanning for `N G obj`, the page tree with
 //! inherited `/MediaBox`, `/CropBox` and `/Rotate`, and the annotation types of a review:
 //! FreeText, Text (sticky note), Square, Circle, Line, PolyLine, Polygon (a cloud with `/BE /S /C`
-//! or `/IT /PolygonCloud`) and Ink; `/RC` rich text is read as plain text. Nothing here draws or
-//! renders. The file is hostile input: every count, depth, array and inflated size is capped,
+//! or `/IT /PolygonCloud`) and Ink; `/RC` rich text is read as plain text. Drawing a page is the
+//! job of the child module `page`, which reads resources through this parser. The file is hostile input: every count, depth, array and inflated size is capped,
 //! objects are read through `get` and `Option`, and a damaged file is an error or a page with
 //! fewer markups, never a panic.
 //!
 //! Not read (ponytail: add when a real file needs it): the owner password, public-key handlers,
-//! the image filters (DCT, JBIG2, CCITT, JPX: such a stream is skipped) and appearance streams.
+//! and appearance streams (the image filters stop `decode`; `page` decodes DCT itself).
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
@@ -25,6 +25,7 @@ use crate::{IoError, Result};
 
 mod crypt;
 mod filters;
+pub(crate) mod page;
 mod rich;
 
 use crypt::Crypt;
@@ -147,7 +148,13 @@ pub struct PdfPageContent {
 pub fn pdf_page_content(bytes: &[u8], page: usize, password: &str) -> Result<PdfPageContent> {
     let (mut pdf, pdict, page_count) = locate(bytes, page, password)?;
     let pg = pdf.page_geometry(&pdict).ok_or_else(|| IoError::Format("the page has no usable /MediaBox".into()))?;
-    let parts = match pdf.val(&pdict, "Contents") {
+    let content = page_streams(&mut pdf, &pdict);
+    Ok(PdfPageContent { page_count, x0: pg.x0, y0: pg.y0, w: pg.w, h: pg.h, rotate: pg.rot, content })
+}
+
+/// A page's content streams, decoded and joined by a line feed.
+fn page_streams(pdf: &mut Pdf, pdict: &Dict) -> Vec<u8> {
+    let parts = match pdf.val(pdict, "Contents") {
         Obj::Arr(v) => v.into_iter().take(MAX_ANNOTS).collect(),
         Obj::Null => Vec::new(),
         one => vec![one],
@@ -163,7 +170,7 @@ pub fn pdf_page_content(bytes: &[u8], page: usize, password: &str) -> Result<Pdf
             content.extend(data);
         }
     }
-    Ok(PdfPageContent { page_count, x0: pg.x0, y0: pg.y0, w: pg.w, h: pg.h, rotate: pg.rot, content })
+    content
 }
 
 /// Opens the file and finds page `page` (with the inherited attributes merged in): through the
@@ -914,7 +921,18 @@ impl<'a> Pdf<'a> {
     /// A stream's data: decrypted, then through its filters (`None` for a filter that is not
     /// read, such as an image filter, or for damaged data).
     fn decode(&mut self, d: &Dict, a: usize, b: usize, id: (u32, u16)) -> Option<Vec<u8>> {
-        let mut cur = self.data.get(a..b)?.to_vec();
+        let raw = self.data.get(a..b)?.to_vec();
+        match self.decode_raw(d, raw, Some(id))? {
+            (data, None) => Some(data),
+            _ => None,
+        }
+    }
+
+    /// `cur` (a stream's raw data; `id` is its encryption key, `None` for inline data) through
+    /// the filters of `d`, up to an image filter (DCT, CCITT, JBIG2, JPX): that one's name and
+    /// parameters are returned with the data it would decode. `None` for damaged data or an
+    /// unknown filter.
+    fn decode_raw(&mut self, d: &Dict, mut cur: Vec<u8>, id: Option<(u32, u16)>) -> Option<(Vec<u8>, Option<(String, Dict)>)> {
         let list = |me: &mut Self, k: &str| -> Vec<Obj> {
             match me.val(d, k) {
                 Obj::Null => Vec::new(),
@@ -925,7 +943,7 @@ impl<'a> Pdf<'a> {
         let (filters, parms) = (list(self, "Filter"), list(self, "DecodeParms"));
         // The xref stream is never encrypted.
         if !matches!(d.get("Type"), Some(Obj::Name(t)) if t == "XRef")
-            && let Some(c) = &self.crypt
+            && let (Some(c), Some(id)) = (&self.crypt, id)
         {
             cur = c.open(c.stream_method(&filters, &parms), id, &cur);
         }
@@ -935,6 +953,9 @@ impl<'a> Pdf<'a> {
                 Some(Obj::Dict(p)) => Some(p.clone()),
                 _ => None,
             };
+            if matches!(n.as_str(), "DCTDecode" | "DCT" | "CCITTFaxDecode" | "CCF" | "JBIG2Decode" | "JPXDecode") {
+                return Some((cur, Some((n.clone(), p.unwrap_or_default()))));
+            }
             let int = |me: &mut Self, k: &str, def: usize| {
                 p.as_ref().and_then(|p| me.num_of(p, k)).filter(|n| *n >= 0.0 && *n < 1e9).map_or(def, |n| n as usize)
             };
@@ -959,7 +980,7 @@ impl<'a> Pdf<'a> {
                 cur = filters::predict(cur, pred, colors, bpc, cols, MAX_INFLATE)?;
             }
         }
-        Some(cur)
+        Some((cur, None))
     }
 
     // ---- pages ----
@@ -983,7 +1004,7 @@ impl<'a> Pdf<'a> {
             }
             let Obj::Dict(mut d) = self.resolve(&node) else { continue };
             let mut inh = inherited;
-            for k in ["MediaBox", "CropBox", "Rotate"] {
+            for k in ["MediaBox", "CropBox", "Rotate", "Resources"] {
                 if let Some(v) = d.get(k) {
                     inh.insert(k.into(), v.clone());
                 }

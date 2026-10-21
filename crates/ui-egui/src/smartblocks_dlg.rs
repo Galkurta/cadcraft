@@ -37,8 +37,8 @@ pub struct State {
     /// BCONVERT or BREPLACE started with nothing selected: its dialog opens once the selection
     /// has been made.
     waiting: Option<Kind>,
-    /// A base point pick is under way (the LASTPOINT to put back when it is cancelled).
-    picking: Option<Vec2>,
+    /// A base point pick (BPICK) is under way; [`resume`] takes its point and reopens the dialog.
+    picking: bool,
     pub(crate) thumbs: Thumbs,
     /// The Blocks palette's "Suggest placement" switch: INSERT from the palette snaps to how the
     /// block's other references sit on walls.
@@ -179,19 +179,15 @@ fn open_with(app: &mut CadApp, kind: Kind, selection: &[cadcraft_engine::doc::Ha
 }
 
 /// Every frame: once the SELECT a dialog asked for, or its base point pick, has ended, bring the
-/// dialog back.
+/// dialog back (with the picked point; unchanged when the pick was cancelled).
 pub fn resume(app: &mut CadApp) {
     if app.session.running.is_some() {
         return;
     }
-    if let Some(previous) = app.smart.picking.take() {
-        let p = app.session.last_point;
-        if p.is_finite() {
-            if let Some(c) = app.smart.convert.as_mut() {
-                c.base = Some(p);
-            }
-        } else {
-            app.session.last_point = previous;
+    if std::mem::take(&mut app.smart.picking) {
+        let picked = app.session.smart_pick.take();
+        if let (Some(p), Some(c)) = (picked, app.smart.convert.as_mut()) {
+            c.base = Some(p);
         }
         if app.smart.convert.is_some() {
             app.ui.dialog = Some("bconvert".into());
@@ -205,13 +201,13 @@ pub fn resume(app: &mut CadApp) {
     }
 }
 
-/// Pick the base point on the drawing (ID's point prompt); the dialog hides meanwhile.
+/// Pick the base point on the drawing (BPICK: "Specify base point" with snaps and tracking); the
+/// dialog hides meanwhile.
 fn pick_base(app: &mut CadApp) {
-    app.smart.picking = Some(app.session.last_point);
-    // A cancelled pick leaves this as it is: that tells it from a picked point.
-    app.session.last_point = Vec2::new(f64::NAN, f64::NAN);
+    app.smart.picking = true;
+    app.session.smart_pick = None;
     app.ui.dialog = None;
-    app.start("id");
+    app.start("bpick");
 }
 
 /// How many instances BCONVERT would convert, refreshed when the drawing or the choice changes.

@@ -1,6 +1,6 @@
 # Where CADCraft falls short of AutoCAD
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-21 · **Change:** minor (AI features: streaming web-capable Assistant, Smart Blocks dialogs and Blocks palette, ATTACH/IMAGEATTACH/PDFATTACH and markup paper, encrypted/damaged PDF markups: A1–A3 narrowed) · **Target:** Autodesk AutoCAD 2027
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-21 · **Change:** minor (AI features closed: A1–A3 removed; DWF/DWFx/DGN V7 underlays and full PDF page drawing narrow FF10 and FF11) · **Target:** Autodesk AutoCAD 2027
 
 Every known shortfall, one row each, ranked within each section by user impact. This is the work
 list: agents pick from here (top of a section first), and remove or update a row in the same PR
@@ -82,8 +82,8 @@ Detail: [file-format-parity.md](file-format-parity.md).
 | FF7 | Table record and object handles from other programs' files are renumbered on the first save (entity handles are kept; `*D` blocks no longer duplicate and once reopened, CADCraft's own files keep every handle across saves, #495) | Low | 4–6 |
 | FF8 | SHX fonts (shape and big fonts) not read | Medium-high (text metrics differ) | 8–12 |
 | FF9 | `.pc3` plotter configuration files; linetype shape (SHX) elements are skipped (templates and `.dwt`, user `.lin`/`.pat` and `.pgp` alias files landed, #552; `.ctb`/`.stb`, #410) | Low-medium | 5–10 |
-| FF10 | PDF import and underlays (PDFATTACH); raster image attach (IMAGEATTACH). PDF export has real text in embedded TrueType subsets, PDF layers, several sheets per file and hyperlinks (#567, #571) | Medium | 20–35 |
-| FF11 | DWF/DWFx, DGN, WMF, EPS, ACIS/STL and other exchange formats | Low-medium | 50–100 |
+| FF10 | PDF import (PDFIMPORT) to editable geometry. PDFATTACH underlays draw paths, text (embedded TrueType/OpenType/CFF/Type 1, other fonts with our own), images, shadings, tiling patterns and forms; JPX, JBIG2 and CCITT images, mesh shadings, soft masks and blend modes aren't drawn. IMAGEATTACH reads PNG and JPEG only (no TIFF, BMP). PDF export has real text in embedded TrueType subsets, PDF layers, several sheets per file and hyperlinks (#567, #571) | Medium | 12–20 |
+| FF11 | DWF/DWFx export; DGN V8 (no public specification: refused with a message), DGN import/export; WMF, EPS, ACIS/STL and other exchange formats. DWFATTACH (DWFx and DWF 6) and DGNATTACH (V7) underlays landed; their leftovers: DWFx opacity masks, DWF ASCII images and marker glyphs, DGN V7 shared cells, B-splines, 3D solids, fonts and level symbology | Low-medium | 40–85 |
 | FF12 | DWG in the web build | Medium | 6–10 |
 | FF13 | R12 binary DXF, pre-R13 DWG | Low | 10–20 |
 | FF14 | SVG import leftovers (shapes, paths, groups and Inkscape layers landed, #636): no CSS classes (`<style>`), `use` references, fills and gradients, text or embedded images; rounded rectangle corners (`rx`/`ry`) are ignored. Opening such a file names what was left out (#627) | Low-medium | 2–4 |
@@ -140,16 +140,13 @@ Detail: [localization-parity.md](localization-parity.md).
 
 ## AI features
 
-| # | Gap | Est. |
-|---|---|---|
-| A1 | Smart Blocks leftovers (BCONVERT with its Convert dialog, -BCONVERT, BSEARCH, BDETECT with T-junction linking, BREPLACE with its Replace dialog, the Blocks palette with Suggested blocks, INSERT `suggest` placement with offset, rotation and distance from a wall end; lines, polylines with bulges/widths, arcs, circles, ellipses, splines, hatches, dimensions, text and references are matched): the Convert dialog's base-point pick borrows the ID prompt; no learning across drawings | 2–4 |
-| A2 | Assistant leftovers (streaming palette, Window ▸ Assistant, any OpenAI-compatible endpoint, vision Auto/On/Off with a text-only fallback, compact tool lines, API key in the OS credential store, web build over fetch): the web path compiles but is untested in a browser and needs a CORS-enabled endpoint; Stop waits for the next streamed chunk | 1–3 |
-| A3 | Markup Assist leftovers (MARKUPIMPORT with markup paper under the markups, MARKUPPAPERDISPLAY and MARKUPPAPERTRANSPARENCY; ATTACH, IMAGEATTACH and PDFATTACH; PDF reader with RC4/AES-128/AES-256 decryption, LZW/ASCII85/Hex/RunLength filters, xref rebuild, CropBox and rich text; tags survive DXF and DWG): PDF underlays draw vector paths only (no text, embedded images or shadings); no DWF/DGN underlays | 8–14 |
+None open. The Assistant (Window ▸ Assistant, streaming, any OpenAI-compatible endpoint, native and web), Smart Blocks (BCONVERT, BSEARCH, BDETECT, BREPLACE, Blocks palette suggestions, INSERT placement learned across drawings) and Markup Assist (MARKUPIMPORT with markup paper, MARKUPASSIST) are done; their file-format leftovers are FF10 and FF11.
 
 ## Revision history
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-21 | minor | AI features closed (A1–A3 removed): Stop ends a request at once, web Assistant verified in a browser, Convert dialog's own base-point prompt (BPICK), placements learned across drawings (BFORGET clears), PDF underlays draw text, images, shadings and forms, DWFATTACH and DGNATTACH; FF10 and FF11 narrowed |
 | 2026-10-21 | minor | AI leftovers: Assistant streaming, vision fallback, credential-store key and web build; Smart Blocks matching for hatches, splines, dimensions and bulges, T-junction detection, distance-along placement, Convert/Replace dialogs and the Blocks palette; ATTACH, IMAGEATTACH, PDFATTACH with images and PDF pages drawn everywhere, markup paper; encrypted, LZW/ASCII85 and damaged PDFs read: A1–A3 narrowed |
 | 2026-10-21 | minor | AI features: Assistant palette over an OpenAI-compatible endpoint (new `cadcraft-ai` crate shared with MCP, which gains `markup_import`), Smart Blocks (BCONVERT, -BCONVERT, BSEARCH, BDETECT, BREPLACE, INSERT `suggest`), MARKUPIMPORT (PDF annotations, image markups via the vision model) and MARKUPASSIST: A1–A3 narrowed |
 | 2026-10-16 | minor | ALIASEDIT typed or from Tools ▸ Customize opens the Command Aliases dialog (user aliases next to the built-in ones; Add, Edit, Remove; OK, Cancel, Apply), #1381: U12 and E5 narrowed |

@@ -159,6 +159,15 @@ impl Driver {
         std::mem::take(&mut self.events)
     }
 
+    /// Stop now, without an error event: the request in flight is cancelled and the turn is over.
+    pub fn abort(&mut self) {
+        if let Some(ex) = self.exchange.take() {
+            ex.cancel();
+        }
+        self.cancel.store(true, Ordering::Relaxed);
+        self.finished = true;
+    }
+
     fn fail(&mut self, message: String) {
         self.exchange = None;
         self.finished = true;

@@ -5,6 +5,9 @@
 /// What a DXF file holds that CADCraft doesn't model, kept and written back (#528).
 mod dxf_raw;
 
+mod dgn;
+mod dwf;
+mod dwfx;
 mod dxf_ext;
 mod dxf_image;
 mod dxf_mleader;
@@ -14,10 +17,12 @@ mod dxf_write;
 mod dxf_xref;
 pub mod pdf;
 pub mod pdf_markup;
-mod pdf_page;
 pub mod plotter;
 pub mod svg;
 mod svg_read;
+mod underlay;
+mod w2d;
+mod zip;
 
 /// Multilines and their styles (MLINE, MLINESTYLE).
 mod dxf_mline;
@@ -29,11 +34,12 @@ pub use cadcraft_dxf::Version;
 pub use dxf_read::entity_from_groups;
 pub use dxf_write::entity_groups;
 pub use pdf::{PdfOptions, pdf, plot};
+pub use underlay::{kind as underlay_kind, sheets as underlay_sheets};
 
 /// Teach the picture cache ([`cadcraft_render::images`]) to draw PDF pages (PDF underlays).
 /// Idempotent; the engine calls it when a session starts.
 pub fn register_image_decoders() {
-    cadcraft_render::images::set_pdf_decoder(cadcraft_render::images::PdfDecoder { page_size: pdf_page::page_size, render: pdf_page::render });
+    cadcraft_render::images::set_pdf_decoder(cadcraft_render::images::PdfDecoder { page_size: underlay::page_size, render: underlay::render });
 }
 
 /// How a drawing is saved as DXF or DWG.

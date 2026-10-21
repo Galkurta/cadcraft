@@ -36,7 +36,7 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("insert", "Block...", run_insert)
             .menu(&["Insert", "Block..."])
             .alias(&["i", "-insert", "ddinsert"])
-            .params("{name (\"*NAME\": exploded), file?: DXF/DWG path (defines or redefines block `name`, default the file name, from its model space; base point $INSBASE), at: [x,y], scale?: number | [x, y], rotation? (degrees), basePoint?: [x,y] (block coordinates), attribs?: {TAG: value}, explode?: bool, suggest?: bool (`at` is the cursor: the insertion point and, unless `rotation` is given, the rotation follow how the block's existing references sit against the nearest line or polyline segment: the offset from it, the turn to it and, when the references agree, the distance from the nearest wall end or corner; of several learned ways the one nearest the cursor wins; adds `suggested`)}")
+            .params("{name (\"*NAME\": exploded), file?: DXF/DWG path (defines or redefines block `name`, default the file name, from its model space; base point $INSBASE), at: [x,y], scale?: number | [x, y], rotation? (degrees), basePoint?: [x,y] (block coordinates), attribs?: {TAG: value}, explode?: bool, suggest?: bool (`at` is the cursor: the insertion point and, unless `rotation` is given, the rotation follow how the block's existing references sit against the nearest line or polyline segment: the offset from it, the turn to it and, when the references agree, the distance from the nearest wall end or corner; of several learned ways the one nearest the cursor wins; adds `suggested`), learned?: [{name, sig?, relations: [[offset, angle, along]]}] (what `placements_json` wrote; stands in for the references when the drawing has none of the block)}")
             .interactive(|_| Ok(Box::new(InsertM::default()))),
         CommandSpec::new("attdef", "Define Attributes...", run_attdef)
             .menu(&["Draw", "Block", "Define Attributes..."])
@@ -287,11 +287,14 @@ fn run_insert(s: &mut Session, p: &Value) -> Result<Value> {
     }
     let mut rot = f64_or(p, "rotation", 0.0).to_radians();
     let vals = p.get("attribs").and_then(Value::as_object).cloned().unwrap_or_default();
-    // `suggest`: `at` is the cursor; the point and rotation follow the block's existing references.
+    // `suggest`: `at` is the cursor; the point and rotation follow the block's existing references,
+    // or `learned` (placements kept from other drawings, as `placements_json` writes them) when
+    // the drawing has none.
     let suggest = bool_or(p, "suggest", false);
+    let given = p.get("learned").map(smartblocks::Learned::from_json);
     let mut at = at;
     let mut suggested = false;
-    if suggest && let Some(g) = smartblocks::suggest_placement(s, &name, at) {
+    if suggest && let Some(g) = smartblocks::suggest_placement(s, &name, at, given.as_ref()) {
         at = g.at;
         if p.get("rotation").is_none() {
             rot = g.rotation;
@@ -299,6 +302,7 @@ fn run_insert(s: &mut Session, p: &Value) -> Result<Value> {
         suggested = true;
     }
     let h = insert_with(s, &name, at, scale, rot, point_param(p, "basePoint"), &vals)?;
+    smartblocks::learn_insert(s, &name);
     if bool_or(p, "explode", false) {
         // The EXPLODE command body, not `execute`: INSERT records the one undo step.
         let explode = find_command("explode").ok_or_else(|| EngineError::UnknownCommand("explode".into()))?;
@@ -613,6 +617,7 @@ impl InsertM {
             && let (Some(n), Some(a), Some(sc), Some(r)) = (self.name.clone(), self.at, self.scale, self.rotation)
         {
             let h = insert_with(s, &n, a, sc, r, self.base, &self.values)?;
+            smartblocks::learn_insert(s, &n);
             if self.explode {
                 insert_file::explode_insert(s, h)?;
             }
@@ -741,7 +746,7 @@ impl Interactive for InsertM {
             }
             InsStage::Point => match i {
                 Input::Point(p) => {
-                    let learned = if self.suggest { self.name.as_deref().and_then(|n| smartblocks::suggest_placement(s, n, p)) } else { None };
+                    let learned = if self.suggest { self.name.as_deref().and_then(|n| smartblocks::suggest_placement(s, n, p, None)) } else { None };
                     if let Some(g) = learned {
                         self.at = Some(g.at);
                         self.rotation.get_or_insert(g.rotation);

@@ -2,7 +2,7 @@ use cadcraft_doc::{Arc as DocArc, Circle, EntityKind, Handle, Line, LwPolyline};
 use cadcraft_geom::{PolyVertex, Vec2, Vec3};
 use serde_json::{Value, json};
 
-use super::place::{learn, suggest};
+use super::place::{Relation, learn, suggest};
 use super::shape::{Feat, feat_of};
 use crate::Session;
 
@@ -362,6 +362,181 @@ fn insert_suggest_snaps_to_the_learned_relation() {
     s.execute("-block", &json!({ "name": "ALONE", "base": [0, 0], "handles": [circle] })).unwrap();
     let r = s.execute("insert", &json!({ "name": "ALONE", "at": [7, 7], "suggest": true })).unwrap();
     assert_eq!(r["suggested"], false);
+}
+
+/// Two walls (y = 0 and y = 5) and the loose shape defined as `name`.
+fn walls_and_block(s: &mut Session, name: &str) {
+    for (a, b) in [([0, 0], [10, 0]), ([0, 5], [10, 5])] {
+        s.execute("line", &json!({ "points": [a, b] })).unwrap();
+    }
+    let shape = loose(s, AT(50.0, 50.0));
+    define(s, name, &shape);
+}
+
+/// The insertion point and rotation (degrees) of the reference an INSERT result names.
+fn placed(s: &Session, r: &Value) -> (Vec2, f64) {
+    let EntityKind::Insert(i) = &s.doc().unwrap().entity(Handle::parse_hex(r["handle"].as_str().unwrap()).unwrap()).unwrap().kind else { panic!() };
+    (i.insert.xy(), i.rotation.to_degrees())
+}
+
+/// Doors on the y = 0 wall, turned 90°, 0.25 off it.
+fn teach_doors(s: &mut Session, name: &str) {
+    for x in [2.0, 6.0] {
+        s.execute("insert", &json!({ "name": name, "at": [x, 0.25], "rotation": 90 })).unwrap();
+    }
+}
+
+#[test]
+fn learned_param_places_a_block_the_drawing_has_no_reference_of() {
+    let mut s = Session::new();
+    walls_and_block(&mut s, "DOOR");
+    let near = json!({ "name": "DOOR", "at": [4.4, 5.9], "suggest": true });
+    assert_eq!(s.execute("insert", &near).unwrap()["suggested"], false);
+    let mut with = near.clone();
+    with["learned"] = json!([{ "name": "DOOR", "relations": [[0.25, std::f64::consts::FRAC_PI_2, 1.0], [0.25, std::f64::consts::FRAC_PI_2, 3.0]] }]);
+    // The first call above left a reference behind; start over in a fresh drawing.
+    let mut s = Session::new();
+    walls_and_block(&mut s, "DOOR");
+    let r = s.execute("insert", &with).unwrap();
+    assert_eq!(r["suggested"], true);
+    let (at, deg) = placed(&s, &r);
+    assert!(at.near(Vec2::new(4.4, 5.25), 1e-9) && (deg - 90.0).abs() < 1e-9, "{at:?} {deg}");
+}
+
+#[test]
+fn inserting_teaches_a_new_drawing_and_survives_a_json_round_trip() {
+    let mut s = Session::new();
+    walls_and_block(&mut s, "DOOR");
+    teach_doors(&mut s, "DOOR");
+    assert_eq!(s.recent_blocks(5), ["DOOR"]);
+    let saved = s.placements_json();
+
+    // Another session (the next run of the app) loads it and uses it in a drawing of its own.
+    let mut t = Session::new();
+    t.load_placements(&saved);
+    assert_eq!(t.placements_json(), saved);
+    walls_and_block(&mut t, "DOOR");
+    let r = t.execute("insert", &json!({ "name": "DOOR", "at": [4.4, 5.9], "suggest": true })).unwrap();
+    assert_eq!(r["suggested"], true);
+    let (at, deg) = placed(&t, &r);
+    assert!(at.near(Vec2::new(4.4, 5.25), 1e-9) && (deg - 90.0).abs() < 1e-9, "{at:?} {deg}");
+
+    // A session that never learned nothing to go by; forgetting returns to that.
+    let mut u = Session::new();
+    walls_and_block(&mut u, "DOOR");
+    assert_eq!(u.execute("insert", &json!({ "name": "DOOR", "at": [4.4, 5.9], "suggest": true })).unwrap()["suggested"], false);
+    assert_eq!(s.execute("bforget", &json!({})).unwrap()["forgotten"], 1);
+    assert!(s.recent_blocks(5).is_empty() && s.placements_json() == json!([]));
+}
+
+#[test]
+fn a_renamed_copy_of_a_block_finds_the_learned_relations_by_shape() {
+    let mut s = Session::new();
+    walls_and_block(&mut s, "DOOR");
+    teach_doors(&mut s, "DOOR");
+    let saved = s.placements_json();
+
+    let mut t = Session::new();
+    t.load_placements(&saved);
+    walls_and_block(&mut t, "PORTAL");
+    let r = t.execute("insert", &json!({ "name": "PORTAL", "at": [4.4, 5.9], "suggest": true })).unwrap();
+    assert_eq!(r["suggested"], true);
+    assert!((placed(&t, &r).0.y - 5.25).abs() < 1e-9);
+
+    // Another shape does not match.
+    let mut u = Session::new();
+    u.load_placements(&saved);
+    for (a, b) in [([0, 0], [10, 0]), ([0, 5], [10, 5])] {
+        u.execute("line", &json!({ "points": [a, b] })).unwrap();
+    }
+    let c = u.execute("circle", &json!({ "center": [0, 0], "radius": 1 })).unwrap()["handle"].clone();
+    u.execute("-block", &json!({ "name": "ROUND", "base": [0, 0], "handles": [c] })).unwrap();
+    assert_eq!(u.execute("insert", &json!({ "name": "ROUND", "at": [4.4, 5.9], "suggest": true })).unwrap()["suggested"], false);
+}
+
+#[test]
+fn learned_data_is_capped_and_the_least_recently_used_goes() {
+    use super::learned::{Learned, MAX_BLOCKS, MAX_RELATIONS};
+    let rel = |i: usize| Relation { offset: i as f64, angle: 0.0, along: 0.0 };
+    let mut l = Learned::default();
+    for b in 0..MAX_BLOCKS + 50 {
+        let found: Vec<Relation> = (0..MAX_RELATIONS * 2).map(rel).collect();
+        l.learn(&format!("B{b}"), 1 + b as u64, &found);
+    }
+    assert_eq!(l.len(), MAX_BLOCKS);
+    assert_eq!(l.recent(1), [format!("B{}", MAX_BLOCKS + 49)]);
+    assert!(l.lookup("B0", 0).is_empty() && l.lookup("B49", 0).is_empty());
+    assert_eq!(l.lookup("B50", 0).len(), MAX_RELATIONS);
+    // Using the oldest kept block makes it the newest; appending past the cap drops its oldest relation.
+    l.learn("B50", 51, &[rel(999)]);
+    assert_eq!(l.recent(1), ["B50"]);
+    assert_eq!(l.lookup("b50", 0).len(), MAX_RELATIONS);
+    assert_eq!(l.lookup("B50", 0).last(), Some(&rel(999)));
+    assert_eq!(l.lookup("B50", 0).first(), Some(&rel(MAX_RELATIONS + 1)));
+
+    // JSON in: too many blocks and relations are cut to the caps, the newest kept.
+    let many: Vec<Value> = (0..MAX_BLOCKS * 2)
+        .map(|b| json!({ "name": format!("N{b}"), "relations": (0..MAX_RELATIONS * 3).map(|i| [i as f64, 0.0, 0.0]).collect::<Vec<_>>() }))
+        .collect();
+    let l = Learned::from_json(&Value::Array(many));
+    assert_eq!(l.len(), MAX_BLOCKS);
+    assert_eq!(l.recent(1), [format!("N{}", MAX_BLOCKS * 2 - 1)]);
+    assert_eq!(l.lookup("N399", 0).len(), MAX_RELATIONS);
+    assert_eq!(l.lookup("N399", 0).first().map(|r| r.offset), Some((MAX_RELATIONS * 2) as f64));
+    assert_eq!(Learned::from_json(&l.to_json()), l);
+}
+
+#[test]
+fn hostile_learned_params_never_panic() {
+    let mut s = Session::new();
+    walls_and_block(&mut s, "DOOR");
+    let huge = Value::Array(
+        (0..5000).map(|i| json!({ "name": "X".repeat(i % 400), "sig": i, "relations": vec![json!([1e308, f64::MAX, -1e308]); 100] })).collect(),
+    );
+    let bad: [Value; 14] = [
+        json!(null),
+        json!(7),
+        json!("learned"),
+        json!({ "name": "DOOR" }),
+        json!([null, 1, "x", [], {}]),
+        json!([{ "name": "DOOR", "relations": "no" }]),
+        json!([{ "name": "DOOR", "relations": [[1, 2], [], [null, 1, 2], ["a", "b", "c"], 5] }]),
+        json!([{ "name": "DOOR", "sig": "zz", "relations": [[1e308, 1e308, 1e308]] }]),
+        json!([{ "name": "DOOR", "sig": -1, "relations": [[0.25, 1e300, 1e300], [-1e300, 0.0, 0.0]] }]),
+        json!([{ "name": "", "relations": [[0, 0, 0]] }]),
+        json!([{ "name": 5, "relations": [[0, 0, 0]] }]),
+        json!([{ "name": "DOOR", "sig": 18446744073709551615u64, "relations": [[0.1, 0.2, 0.3]] }]),
+        json!([{ "name": "DOOR", "relations": [[0.25, 1.57, 1.0]] }, { "name": "DOOR", "relations": [] }]),
+        huge,
+    ];
+    for l in bad {
+        for at in [json!([4.4, 5.9]), json!([1e308, -1e308])] {
+            let _ = s.execute("insert", &json!({ "name": "DOOR", "at": at, "suggest": true, "learned": l }));
+            let _ = s.execute("insert", &json!({ "name": "NOPE", "at": at, "suggest": true, "learned": l }));
+        }
+        s.load_placements(&l);
+        let _ = s.placements_json();
+    }
+}
+
+#[test]
+fn bpick_keeps_the_picked_point_and_a_cancel_keeps_nothing() {
+    let mut s = Session::new();
+    s.start("bpick").unwrap();
+    assert!(s.prompt_text().contains("Specify base point"), "{}", s.prompt_text());
+    s.input(crate::Input::Point(Vec2::new(3.0, 4.0))).unwrap();
+    assert!(s.running.is_none());
+    assert_eq!(s.smart_pick, Some(Vec2::new(3.0, 4.0)));
+    s.smart_pick = None;
+    s.start("bpick").unwrap();
+    s.input(crate::Input::Cancel).unwrap();
+    assert!(s.running.is_none() && s.smart_pick.is_none());
+    s.execute("bpick", &json!({ "point": [1, 2] })).unwrap();
+    assert_eq!(s.smart_pick, Some(Vec2::new(1.0, 2.0)));
+    for bad in [json!({}), json!({ "point": [f64::NAN, 1] }), json!({ "point": "x" }), json!({ "point": [null, 0] })] {
+        let _ = s.execute("bpick", &bad);
+    }
+    assert_eq!(s.smart_pick, Some(Vec2::new(1.0, 2.0)));
 }
 
 #[test]

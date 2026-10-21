@@ -25,8 +25,9 @@ tiny-skia = { workspace = true }
 aes = "0.8"
 sha2 = "0.10"
 md-5 = "0.10"
+skrifa = { workspace = true }
+image = { workspace = true }
 
 [dev-dependencies]
 # Reads CADCraft's DWG output as written (tests only; the same version as cadcraft-dwg's).
 acadrust = "0.6.4"
-image = { workspace = true }

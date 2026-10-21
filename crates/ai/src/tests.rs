@@ -47,6 +47,7 @@ fn serve_chunks(replies: Vec<(u16, &'static str, Vec<Vec<u8>>)>) -> (Config, Joi
         model: "test-model".into(),
         api_key: "sekret".into(),
         vision: Vision::Auto,
+        idle_timeout_ms: 0,
     };
     let h = std::thread::spawn(move || {
         let mut requests = Vec::new();
@@ -160,6 +161,27 @@ fn stop_is_honoured_before_the_next_request() {
     let (cfg, _server) = serve(vec![]);
     let events = Agent::new(cfg).send(&mut Sess(Session::new()), "go", &AtomicBool::new(true), &mut |_| {});
     assert_eq!(events, vec![Event::Error("stopped".into())]);
+}
+
+#[test]
+fn a_server_that_goes_silent_ends_the_request_with_a_clear_error() {
+    // Accepts the connection, reads the request and then says nothing at all.
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let cfg =
+        Config { base_url: format!("http://{}/v1", listener.local_addr().unwrap()), model: "m".into(), idle_timeout_ms: 300, ..Config::default() };
+    let (done_tx, done_rx) = std::sync::mpsc::channel::<()>();
+    let server = std::thread::spawn(move || {
+        let Ok((mut conn, _)) = listener.accept() else { return };
+        let mut buf = [0u8; 8192];
+        let _ = conn.read(&mut buf);
+        let _ = done_rx.recv_timeout(Duration::from_secs(10));
+    });
+    let start = Instant::now();
+    let events = Agent::new(cfg).send(&mut Sess(Session::new()), "go", &AtomicBool::new(false), &mut |_| {});
+    assert!(start.elapsed() < Duration::from_secs(5), "{:?}", start.elapsed());
+    assert!(matches!(events.as_slice(), [Event::Error(m)] if m.contains("went silent")), "{events:?}");
+    drop(done_tx);
+    server.join().unwrap();
 }
 
 #[test]

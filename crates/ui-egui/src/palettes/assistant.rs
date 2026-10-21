@@ -8,7 +8,7 @@
 //! Image markups (MARKUPIMPORT on a PNG/JPG) are read by the model on a worker thread.
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::AtomicBool;
 use std::sync::mpsc::{Receiver, channel};
 use std::time::Duration;
 
@@ -94,7 +94,6 @@ struct Line {
 /// A turn running: polled every frame by [`pump`].
 struct Run {
     driver: Driver,
-    cancel: Arc<AtomicBool>,
 }
 
 /// An image being read for MARKUPIMPORT.
@@ -361,10 +360,9 @@ fn send(app: &mut CadApp, text: String) {
     agent.config = cfg;
     agent.no_vision |= st.no_vision;
     st.note(Kind::User, text.clone());
-    let cancel = Arc::new(AtomicBool::new(false));
     let wake = ctx.clone();
-    let driver = Driver::start(agent, &text, false, cancel.clone(), Arc::new(move || wake.request_repaint()));
-    st.run = Some(Run { driver, cancel });
+    let driver = Driver::start(agent, &text, false, Arc::new(AtomicBool::new(false)), Arc::new(move || wake.request_repaint()));
+    st.run = Some(Run { driver });
     ctx.request_repaint();
 }
 
@@ -525,10 +523,13 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
                 r.request_focus();
             }
             if ui.add_enabled(running, egui::Button::new(crate::tl!("Stop"))).clicked() {
-                if let Some(run) = &st.run {
-                    run.cancel.store(true, Ordering::Relaxed);
+                // Stop is immediate: the request is cancelled, whatever it still delivers is
+                // ignored, and the palette is idle again before the next frame.
+                if let Some(mut run) = st.run.take() {
+                    run.driver.abort();
+                    st.agent = Some(run.driver.into_agent());
                 }
-                st.note(Kind::Note, crate::tl!("Stopping…"));
+                st.note(Kind::Note, crate::tl!("Stopped"));
                 ui.ctx().request_repaint();
             }
             if ui.add_enabled(!running, egui::Button::new(crate::tl!("Clear"))).clicked() {

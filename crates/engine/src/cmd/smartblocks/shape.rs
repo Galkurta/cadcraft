@@ -1129,6 +1129,33 @@ pub fn block_sig(b: &Block) -> Sig {
     sig_of(b.entities.iter().map(|e| &e.kind))
 }
 
+impl Sig {
+    /// A stable hash of the signature (FNV-1a over the object kinds and the aspect and lengths
+    /// rounded to 1/100), so copies of a block under another name share it; 0 for no shape.
+    /// ponytail: values near a rounding step can hash apart; matching by name still works then.
+    pub fn hash(&self) -> u64 {
+        if self.kinds.is_empty() {
+            return 0;
+        }
+        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+        let mut eat = |bytes: &[u8]| {
+            for b in bytes {
+                h = (h ^ u64::from(*b)).wrapping_mul(0x0100_0000_01b3);
+            }
+        };
+        for (k, n) in &self.kinds {
+            eat(k.as_bytes());
+            eat(&n.to_le_bytes());
+        }
+        // Saturating float-to-int casts: NaN is 0.
+        eat(&((self.aspect * 100.0).round() as i64).to_le_bytes());
+        for l in &self.lens {
+            eat(&((l * 100.0).round() as i64).to_le_bytes());
+        }
+        h.max(1)
+    }
+}
+
 /// The signature of a group of objects, as if they were a block.
 pub fn sig_of<'a>(kinds_in: impl Iterator<Item = &'a EntityKind>) -> Sig {
     let mut kinds: BTreeMap<&'static str, u32> = BTreeMap::new();

@@ -5,6 +5,7 @@ pub(crate) mod annoscale;
 mod annotate;
 mod array;
 mod attach;
+mod attach_cad;
 mod audit;
 pub(crate) mod blocks;
 pub mod clipboard;
@@ -209,6 +210,7 @@ pub fn command_specs() -> &'static [CommandSpec] {
         v.extend(txt2mtxt::specs());
         v.extend(smartblocks::specs());
         v.extend(attach::specs());
+        v.extend(attach_cad::specs());
         v.extend(markup::specs());
         v.extend(constraints::specs());
         v.extend(lisp::specs());

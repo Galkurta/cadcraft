@@ -24,7 +24,7 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("attach", "Attach", run_attach)
             .menu(&["Insert", "Attach..."])
             .params(
-                "{path (a .png/.jpg/.jpeg raster image or a .pdf file; the extension picks IMAGEATTACH or PDFATTACH), …that command's other parameters} → as IMAGEATTACH / PDFATTACH",
+                "{path (a .png/.jpg/.jpeg raster image, a .pdf, .dwf/.dwfx or .dgn file; the extension picks IMAGEATTACH, PDFATTACH, DWFATTACH or DGNATTACH), …that command's other parameters} → as that command",
             )
             .interactive(|_| Ok(Box::new(AttachM { kind: None, ..AttachM::default() }))),
         CommandSpec::new("imageattach", "Attach Image", run_image)
@@ -50,7 +50,7 @@ pub fn specs() -> Vec<CommandSpec> {
 }
 
 /// The path to store and, for `data`, the registered name; the picture must be readable by it.
-fn make_available(cmd: &str, p: &Value, path: &str) -> Result<String> {
+pub(super) fn make_available(cmd: &str, p: &Value, path: &str) -> Result<String> {
     if let Some(data) = p.get("data").filter(|v| !v.is_null()) {
         let text = data.as_str().ok_or_else(|| bad(cmd, "`data` must be base64 text"))?;
         let bytes = super::file::base64_decode(text).filter(|b| !b.is_empty()).ok_or_else(|| bad(cmd, "`data` is not valid base64"))?;
@@ -68,7 +68,7 @@ pub(super) fn absolute(path: &str) -> String {
     std::path::absolute(path).map(|a| a.to_string_lossy().into_owned()).unwrap_or_else(|_| path.to_string())
 }
 
-fn path_param<'a>(cmd: &str, p: &'a Value) -> Result<&'a str> {
+pub(super) fn path_param<'a>(cmd: &str, p: &'a Value) -> Result<&'a str> {
     str_param(p, "path").map(str::trim).filter(|x| !x.is_empty()).ok_or_else(|| bad(cmd, "`path` is required"))
 }
 
@@ -86,12 +86,14 @@ fn run_attach(s: &mut Session, p: &Value) -> Result<Value> {
     match ext.as_str() {
         "png" | "jpg" | "jpeg" => attach(s, "attach", p, false),
         "pdf" => attach(s, "attach", p, true),
-        _ => Err(bad("attach", "attaches PNG, JPEG and PDF files; use XATTACH for drawings")),
+        "dwf" | "dwfx" => super::attach_cad::run_dwf(s, p),
+        "dgn" => super::attach_cad::run_dgn(s, p),
+        _ => Err(bad("attach", "attaches PNG, JPEG, PDF, DWF, DWFx and DGN files; use XATTACH for drawings")),
     }
 }
 
 /// A scale from `width`/`scale`: drawing units per unit of the picture (pixel or point).
-fn unit_scale(cmd: &str, p: &Value, natural: f64) -> Result<f64> {
+pub(super) fn unit_scale(cmd: &str, p: &Value, natural: f64) -> Result<f64> {
     let width = size_param(cmd, p, "width", false)?;
     let scale = size_param(cmd, p, "scale", false)?;
     let unit = match (width, scale) {
@@ -105,6 +107,32 @@ fn unit_scale(cmd: &str, p: &Value, natural: f64) -> Result<f64> {
     } else {
         Err(bad(cmd, "the picture would be too large or too small"))
     }
+}
+
+/// Where a picture goes: the lower-left corner, the rotation about it (degrees) and the layer.
+pub(super) struct Placement {
+    pub at: Vec2,
+    pub rotation: f64,
+    pub layer: Option<String>,
+}
+
+/// The `at`, `rotation` and `layer` parameters.
+pub(super) fn placement(cmd: &str, p: &Value) -> Result<Placement> {
+    let at = match p.get("at") {
+        None | Some(Value::Null) => Vec2::ZERO,
+        Some(v) => super::point_value(v).filter(|v| v.x.abs() <= LIMIT && v.y.abs() <= LIMIT).ok_or_else(|| bad(cmd, "`at` must be [x, y]"))?,
+    };
+    let rotation = match p.get("rotation") {
+        None | Some(Value::Null) => 0.0,
+        Some(v) => v.as_f64().filter(|r| r.is_finite()).ok_or_else(|| bad(cmd, "`rotation` must be a number of degrees"))?,
+    };
+    let layer = match p.get("layer").filter(|v| !v.is_null()) {
+        None => None,
+        Some(v) => {
+            Some(v.as_str().filter(|n| super::layer::valid_name(n)).ok_or_else(|| bad(cmd, "`layer` must be a valid layer name"))?.trim().to_string())
+        }
+    };
+    Ok(Placement { at, rotation, layer })
 }
 
 fn attach(s: &mut Session, cmd: &str, p: &Value, pdf: bool) -> Result<Value> {
@@ -121,20 +149,7 @@ fn attach(s: &mut Session, cmd: &str, p: &Value, pdf: bool) -> Result<Value> {
     let stored = make_available(cmd, p, path)?;
     let natural = images::natural_size(&stored, page).map_err(|e| bad(cmd, e))?;
     let unit = unit_scale(cmd, p, natural.0)?;
-    let at = match p.get("at") {
-        None | Some(Value::Null) => Vec2::ZERO,
-        Some(v) => super::point_value(v).filter(|v| v.x.abs() <= LIMIT && v.y.abs() <= LIMIT).ok_or_else(|| bad(cmd, "`at` must be [x, y]"))?,
-    };
-    let rotation = match p.get("rotation") {
-        None | Some(Value::Null) => 0.0,
-        Some(v) => v.as_f64().filter(|r| r.is_finite()).ok_or_else(|| bad(cmd, "`rotation` must be a number of degrees"))?,
-    };
-    let layer = match p.get("layer").filter(|v| !v.is_null()) {
-        None => None,
-        Some(v) => {
-            Some(v.as_str().filter(|n| super::layer::valid_name(n)).ok_or_else(|| bad(cmd, "`layer` must be a valid layer name"))?.trim().to_string())
-        }
-    };
+    let Placement { at, rotation, layer } = placement(cmd, p)?;
     let handle = place(s, &stored, page, natural, at, unit, rotation, layer.as_deref(), false)?;
     let (w, h) = (natural.0 * unit, natural.1 * unit);
     let mut out = json!({ "handle": handle, "path": stored, "width": w, "height": h });
@@ -283,7 +298,12 @@ impl Interactive for AttachM {
                 if let Some(pg) = page {
                     p["page"] = json!(pg);
                 }
-                let r = if self.pdf() { run_pdf(s, &p) } else { run_image(s, &p) }?;
+                let r = match super::attach_cad::kind_of(path) {
+                    Some(cadcraft_doc::UnderlayKind::Dwf) => super::attach_cad::run_dwf(s, &p),
+                    Some(cadcraft_doc::UnderlayKind::Dgn) => super::attach_cad::run_dgn(s, &p),
+                    _ if self.pdf() => run_pdf(s, &p),
+                    _ => run_image(s, &p),
+                }?;
                 s.echo(format!(
                     "Attached {} ({} x {} drawing units).",
                     r["path"].as_str().unwrap_or(""),

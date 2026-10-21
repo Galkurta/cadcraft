@@ -4,8 +4,11 @@
 //! Shapes match by rotation, shift and (when `scaled`) uniform scale, never by mirroring; see
 //! [`shape`]. No model, no network: the matching is plain geometry within a tolerance.
 
+mod learned;
 mod place;
 mod shape;
+
+pub use self::learned::Learned;
 
 use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
@@ -68,6 +71,14 @@ pub fn specs() -> Vec<CommandSpec> {
                  with it the references take that block, keeping insertion point, rotation, scale, layer and the attribute values whose tags exist",
             )
             .interactive(|_| Ok(Box::new(BReplaceM::default()))),
+        CommandSpec::new("bpick", "Pick Base Point", run_bpick)
+            .params("{point: [x, y]} (typed: the point at \"Specify base point\"): the Convert to Block dialog's base point pick, kept in the session for the dialog to take; changes nothing")
+            .enabled(super::has_doc)
+            .noundo()
+            .interactive(|_| Ok(Box::new(BPickM))),
+        CommandSpec::new("bforget", "Forget Learned Placements", run_bforget)
+            .params("{} → {forgotten}: drops the block placements learned across drawings (INSERT's `suggest` falls back to the drawing's own references again)")
+            .noundo(),
     ]
 }
 
@@ -659,12 +670,72 @@ impl Interactive for BReplaceM {
     }
 }
 
+// ---------- BPICK ----------
+
+fn run_bpick(s: &mut Session, p: &Value) -> Result<Value> {
+    let at = point_param(p, "point").filter(|v| v.is_finite()).ok_or_else(|| bad("bpick", "`point` is [x, y]"))?;
+    s.smart_pick = Some(at);
+    Ok(json!({ "point": [at.x, at.y] }))
+}
+
+/// One point at "Specify base point", with the usual snaps and tracking.
+struct BPickM;
+
+impl Interactive for BPickM {
+    fn name(&self) -> &'static str {
+        "BPICK"
+    }
+    fn prompt(&self, _s: &Session) -> Prompt {
+        Prompt::new("Specify base point", Accept::POINT)
+    }
+    fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
+        match i {
+            Input::Point(p) if p.is_finite() => {
+                s.smart_pick = Some(p);
+                Ok(Step::Done)
+            }
+            Input::Cancel | Input::Enter => Ok(Step::Cancel),
+            _ => Ok(Step::Continue),
+        }
+    }
+}
+
+// ---------- learned placements ----------
+
+fn run_bforget(s: &mut Session, _p: &Value) -> Result<Value> {
+    Ok(json!({ "forgotten": s.forget_placements() }))
+}
+
+impl Session {
+    /// The placements learned across drawings, as JSON for the host to keep ([`Learned::to_json`]).
+    pub fn placements_json(&self) -> Value {
+        self.placements.to_json()
+    }
+
+    /// Replace the learned placements by what [`Session::placements_json`] wrote; anything
+    /// malformed is ignored.
+    pub fn load_placements(&mut self, v: &Value) {
+        self.placements = Learned::from_json(v);
+    }
+
+    /// Drop every learned placement; the number of blocks dropped.
+    pub fn forget_placements(&mut self) -> usize {
+        let n = self.placements.len();
+        self.placements.clear();
+        n
+    }
+
+    /// The blocks inserted most recently in any drawing, newest first, at most `n`.
+    pub fn recent_blocks(&self, n: usize) -> Vec<String> {
+        self.placements.recent(n)
+    }
+}
+
 // ---------- INSERT placement ----------
 
-/// Where a new reference to `name` goes when its insertion point is near `cursor`: the way the
-/// block's existing references sit against the nearest line or polyline segment of the active
-/// space, most common first. The position along the segment follows the cursor.
-pub(crate) fn suggest_placement(s: &Session, name: &str, cursor: Vec2) -> Option<place::Suggestion> {
+/// The visible line and polyline segments of the active space, and the `(insertion point,
+/// rotation)` of the references to `name`.
+fn walls_and_refs(s: &Session, name: &str) -> Option<(Vec<(Vec2, Vec2)>, Vec<(Vec2, f64)>)> {
     let d = s.doc().ok()?;
     let store = d.space(&s.space())?;
     let mut segs: Vec<(Vec2, Vec2)> = Vec::new();
@@ -691,7 +762,52 @@ pub(crate) fn suggest_placement(s: &Session, name: &str, cursor: Vec2) -> Option
             _ => {}
         }
     }
-    place::suggest(cursor, &segs, &place::learn(&refs, &segs), PLACE_TOL)
+    Some((segs, refs))
+}
+
+/// The shape signature hash of block `name` (0 when it has none or is not defined).
+fn block_hash(s: &Session, name: &str) -> u64 {
+    s.doc().ok().and_then(|d| d.block(name)).map_or(0, |b| shape::block_sig(b).hash())
+}
+
+/// Where a new reference to `name` goes when its insertion point is near `cursor`: the way the
+/// block's existing references sit against the nearest line or polyline segment of the active
+/// space, most common first. The position along the segment follows the cursor. When the drawing
+/// has no reference to the block, the relations `given` (else the session's, learned in other
+/// drawings) stand in, found by name or by shape.
+pub(crate) fn suggest_placement(s: &Session, name: &str, cursor: Vec2, given: Option<&Learned>) -> Option<place::Suggestion> {
+    let (segs, refs) = walls_and_refs(s, name)?;
+    let relations = if refs.is_empty() {
+        let stored = |l: &Learned| l.lookup(name, 0).to_vec();
+        let mut found = given.map(stored).unwrap_or_default();
+        if found.is_empty() {
+            found = stored(&s.placements);
+        }
+        if found.is_empty() {
+            // Not known by name: a renamed copy of a known block has the same shape.
+            let sig = block_hash(s, name);
+            found = given.map(|l| l.lookup(name, sig).to_vec()).unwrap_or_default();
+            if found.is_empty() {
+                found = s.placements.lookup(name, sig).to_vec();
+            }
+        }
+        found
+    } else {
+        place::learn(&refs, &segs)
+    };
+    place::suggest(cursor, &segs, &relations, PLACE_TOL)
+}
+
+/// Remember how the references to `name` sit, after one was inserted: the session's learned
+/// placements follow. Never fails; a block that is gone or a drawing without walls just notes
+/// the use.
+pub(crate) fn learn_insert(s: &mut Session, name: &str) {
+    let Some((segs, refs)) = walls_and_refs(s, name) else { return };
+    let Some(real) = s.doc().ok().and_then(|d| d.block(name)).map(|b| b.name.clone()) else { return };
+    let sig = block_hash(s, name);
+    let latest = refs.get(refs.len().saturating_sub(learned::MAX_RELATIONS)..).unwrap_or_default();
+    let found = place::learn(latest, &segs);
+    s.placements.learn(&real, sig, &found);
 }
 
 #[cfg(test)]

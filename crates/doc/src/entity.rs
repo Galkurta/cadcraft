@@ -877,11 +877,34 @@ pub struct Image {
     pub pixel_size: Vec2,
     #[serde(default)]
     pub resolution_units: u8,
-    /// 0: a raster image (PNG/JPEG). 1 or more: a PDF underlay showing that page of `path`; then
-    /// `u` and `v` are the scale of one PDF point (1/72 inch) and `size` the page size in points
-    /// (0 until the file has been read).
+    /// 0: a raster image (PNG/JPEG). 1 or more: an underlay showing that sheet of `path` (see
+    /// `kind`); then `u` and `v` are the scale of one point (1/72 inch) and `size` the sheet size
+    /// in points (0 until the file has been read).
     #[serde(default, skip_serializing_if = "is_zero_u32")]
     pub page: u32,
+    /// What the underlay file is (only meaningful when `page` is 1 or more).
+    #[serde(default, skip_serializing_if = "UnderlayKind::is_pdf")]
+    pub kind: UnderlayKind,
+    /// The DWF sheet or DGN model name (DXF group 2 of the definition); empty for a PDF, where
+    /// `page` alone names the page.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub sheet: String,
+}
+/// The kind of file an underlay shows.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum UnderlayKind {
+    #[default]
+    Pdf,
+    /// DWF 6 or DWFx (DXF `DWFUNDERLAY`).
+    Dwf,
+    /// MicroStation DGN V7 (DXF `DGNUNDERLAY`).
+    Dgn,
+}
+impl UnderlayKind {
+    pub fn is_pdf(&self) -> bool {
+        *self == UnderlayKind::Pdf
+    }
 }
 fn is_zero_u32(v: &u32) -> bool {
     *v == 0
@@ -913,6 +936,8 @@ impl Default for Image {
             pixel_size: image_pixel(),
             resolution_units: 0,
             page: 0,
+            kind: UnderlayKind::Pdf,
+            sheet: String::new(),
         }
     }
 }

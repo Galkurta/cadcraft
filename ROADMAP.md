@@ -57,7 +57,7 @@ Hours are Opus 5.5 agent wall-clock hours, calibrated on this repo's own build: 
 | Stability | 35% | 30–50 | [gaps.md](docs/gaps.md#stability) |
 | Platforms | 75% | 15–25 | [gaps.md](docs/gaps.md#platforms) |
 | Ecosystem and automation | 10% | 120–200 | [gaps.md](docs/gaps.md#ecosystem-and-automation) |
-| AI features | 85% | 11–21 | [gaps.md](docs/gaps.md#ai-features) |
+| AI features | 100% | 0 | [gaps.md](docs/gaps.md#ai-features) |
 
 ## Features
 
@@ -119,7 +119,7 @@ Ranked; detail and the full beta checklist in [docs/roadmap.md](docs/roadmap.md)
 
 | Date | Entry |
 |---|---|
-| 2026-10-21 | AI features 20% → 85%: Assistant palette (streaming, any OpenAI-compatible endpoint, vision fallback, key in the OS credential store, web build), Smart Blocks (BCONVERT with Convert dialog, -BCONVERT, BSEARCH, BDETECT, BREPLACE with Replace dialog, Blocks palette suggestions, INSERT `suggest`) by deterministic shape matching, ATTACH/IMAGEATTACH/PDFATTACH with images and PDF pages drawn on screen and in exports, MARKUPIMPORT with markup paper (own PDF reader: encryption, LZW/ASCII85, damaged xrefs) and MARKUPASSIST. Ready for real work unchanged at ≈ 38% (weight 1%). |
+| 2026-10-21 | AI features 20% → 100%: Assistant palette (streaming, any OpenAI-compatible endpoint, vision fallback, instant Stop, key in the OS credential store, web build verified in a browser), Smart Blocks (BCONVERT with Convert dialog, -BCONVERT, BSEARCH, BDETECT, BREPLACE with Replace dialog, Blocks palette suggestions, INSERT `suggest` learned across drawings) by deterministic shape matching, ATTACH/IMAGEATTACH/PDFATTACH/DWFATTACH/DGNATTACH with underlays drawn on screen and in exports, MARKUPIMPORT with markup paper (own PDF reader: encryption, every common filter, damaged xrefs; page text, images and shadings) and MARKUPASSIST. Ready for real work unchanged at ≈ 38% (weight 1%). |
 | 2026-10-14 | HATCHEDIT adds boundaries from internal points or closed objects and removes selected loops in the dialog, command line and JSON command; associative links and undo are covered by tests. |
 | 2026-10-12 | TRIM: a pick after a closed polyline's last cut keeps only the complementary run instead of an extra circuit of the outline (#726) |
 | 2026-10-12 | HATCHEDIT refuses an explicit bad `scale` or `angle` before it edits anything, so a rejected request leaves the drawing, undo and redo as they were (#724) |
