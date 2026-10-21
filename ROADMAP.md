@@ -57,7 +57,7 @@ Hours are Opus 5.5 agent wall-clock hours, calibrated on this repo's own build: 
 | Stability | 35% | 30–50 | [gaps.md](docs/gaps.md#stability) |
 | Platforms | 75% | 15–25 | [gaps.md](docs/gaps.md#platforms) |
 | Ecosystem and automation | 10% | 120–200 | [gaps.md](docs/gaps.md#ecosystem-and-automation) |
-| AI features | 20% | 40–80 | [gaps.md](docs/gaps.md#ai-features) |
+| AI features | 60% | 15–28 | [gaps.md](docs/gaps.md#ai-features) |
 
 ## Features
 
@@ -119,6 +119,7 @@ Ranked; detail and the full beta checklist in [docs/roadmap.md](docs/roadmap.md)
 
 | Date | Entry |
 |---|---|
+| 2026-10-21 | AI features 20% → 60%: Assistant palette (any OpenAI-compatible endpoint, same tools as MCP), Smart Blocks (BCONVERT, -BCONVERT, BSEARCH, BDETECT, BREPLACE, INSERT `suggest`) by deterministic shape matching, MARKUPIMPORT (own PDF annotation reader; images through the vision model) and MARKUPASSIST. Ready for real work unchanged at ≈ 38% (weight 1%). |
 | 2026-10-14 | HATCHEDIT adds boundaries from internal points or closed objects and removes selected loops in the dialog, command line and JSON command; associative links and undo are covered by tests. |
 | 2026-10-12 | TRIM: a pick after a closed polyline's last cut keeps only the complementary run instead of an extra circuit of the outline (#726) |
 | 2026-10-12 | HATCHEDIT refuses an explicit bad `scale` or `angle` before it edits anything, so a rejected request leaves the drawing, undo and redo as they were (#724) |
@@ -135,6 +136,7 @@ Ranked; detail and the full beta checklist in [docs/roadmap.md](docs/roadmap.md)
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-21 | minor | AI features row and progress log: Assistant, Smart Blocks, Markup Import/Assist |
 | 2026-10-14 | minor | Progress log: HATCHEDIT boundary add/remove |
 | 2026-10-12 | trivial | Progress log: closed-polyline TRIM (#726) |
 | 2026-10-12 | trivial | Progress log: HATCHEDIT numeric validation (#724) |

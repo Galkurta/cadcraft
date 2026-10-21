@@ -1,0 +1,18 @@
+[package]
+name = "cadcraft-ai"
+description = "CADCraft AI features: the tool set agents drive the app with, an OpenAI-compatible chat client, the Assistant's agent loop and image-markup recognition"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+cadcraft-engine = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+
+# Native only: the web build has no HTTP client here (`chat` reports "not available yet").
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+ureq = { workspace = true }

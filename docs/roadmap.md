@@ -1,6 +1,6 @@
 # CADCraft roadmap detail
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-12 · **Change:** minor (Block Editor for static blocks: "Use blocks" evidence updated) · **Target:** Autodesk AutoCAD 2027
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-21 · **Change:** minor (AI features: Assistant, Smart Blocks, Markup Import/Assist) · **Target:** Autodesk AutoCAD 2027
 
 Forward-looking plan: milestones with status, the current focus, and what comes next with
 estimates. The summary is [ROADMAP.md](../ROADMAP.md); the work items behind every line are in
@@ -88,7 +88,7 @@ agents that built each milestone, are in the progress log of [ROADMAP.md](../ROA
 | M12 | Automation: AutoLISP, SCRIPT, action recorder, sheet sets, Express Tools | ≈ 15% (MCP, CLI, control channel done) | 130–220 |
 | M13 | 1.0 polish: preferences, workspaces, localisation, accessibility, signed packages, docs | ≈ 15% (signed packages for every platform exist; themes done; string catalog with Ukrainian and German, live language switching, #36) | 110–170 |
 | — | Geometry precision (cross-cutting, see [geometry-parity.md](geometry-parity.md)) | ≈ 40% | 70–110 |
-| — | AI features | ≈ 0% in-app | 40–80 |
+| — | AI features | ≈ 60% in-app | 15–28 |
 | | **Remaining to full parity** | | **≈ 1,300–2,100** |
 
 Milestone rows overlap a little with the cross-cutting rows; the total is the dimension sum in
@@ -97,12 +97,13 @@ Milestone rows overlap a little with the cross-cutting rows; the total is the di
 ## After beta
 
 3D foundations (UCS, 3D views, orbit, then solids per `plan/adr/0001`), sheet sets, the full
-AutoLISP surface, AI features with openly licensed local models, and every remaining language.
+AutoLISP surface, the AI-feature leftovers (markup paper, dialogs; optionally openly licensed local models), and every remaining language.
 
 ## Revision history
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-21 | minor | AI features row ≈ 0% → ≈ 60% in-app (Assistant palette, Smart Blocks, MARKUPIMPORT, MARKUPASSIST), 15–28 h left |
 | 2026-10-12 | minor | Block Editor for static blocks landed: "Use blocks" evidence updated; status and hours unchanged (REFEDIT and dynamic blocks remain) |
 | 2026-10-11 | minor | Alpha-gate evidence refreshed for merged work (#459, #525, #528, #160, #186, #564); statuses and hours unchanged |
 | 2026-10-10 | minor | Merged main: fmt fixed, Ukrainian catalog noted in M13, ready for real work 38% |

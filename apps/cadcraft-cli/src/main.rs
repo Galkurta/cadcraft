@@ -605,7 +605,7 @@ fn parse_mcp_args(args: &[String]) -> Result<McpTarget, String> {
 }
 
 fn mcp(args: &[String]) -> Result<(), String> {
-    let backend: Box<dyn cadcraft_mcp::Backend> = match parse_mcp_args(args)? {
+    let backend: Box<dyn cadcraft_ai::Backend> = match parse_mcp_args(args)? {
         McpTarget::Connect { addr, lazy: true, launch } => Box::new(cadcraft_mcp::Remote::lazy(&addr, launch)),
         McpTarget::Connect { addr, .. } => match cadcraft_mcp::Remote::connect(&addr) {
             Ok(r) => Box::new(r),

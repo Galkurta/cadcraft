@@ -1,6 +1,6 @@
 # Where CADCraft falls short of AutoCAD
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-16 · **Change:** minor (Command Aliases dialog for ALIASEDIT: U12 and E5 narrowed) · **Target:** Autodesk AutoCAD 2027
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-21 · **Change:** minor (AI features: Assistant palette, Smart Blocks BCONVERT/BSEARCH/BDETECT/BREPLACE, MARKUPIMPORT and MARKUPASSIST: A1–A3 narrowed) · **Target:** Autodesk AutoCAD 2027
 
 Every known shortfall, one row each, ranked within each section by user impact. This is the work
 list: agents pick from here (top of a section first), and remove or update a row in the same PR
@@ -142,14 +142,15 @@ Detail: [localization-parity.md](localization-parity.md).
 
 | # | Gap | Est. |
 |---|---|---|
-| A1 | Smart Blocks equivalents (placement suggestions, replace, detect and convert, search), using local open models | 25–50 + model licensing |
-| A2 | An in-app assistant (AutoCAD has Autodesk Assistant); CADCraft's MCP server already lets any agent drive it, including read-only structured queries of the current selection (`query_entities selected:true`) | 10–20 |
-| A3 | Markup Assist (import markups from PDFs/images) | 10–20 |
+| A1 | Smart Blocks leftovers (BCONVERT, -BCONVERT, BSEARCH, BDETECT, BREPLACE and INSERT `suggest` placement landed, deterministic shape matching with no model): no Convert/Replace dialogs or Blocks-palette suggestions; hatches, splines and dimensions aren't matched; BDETECT links objects only at coincident key points; placement learns offset and rotation from the nearest segment, not the position along it | 6–12 |
+| A2 | Assistant leftovers (the Assistant palette, Window ▸ Assistant / ASSISTANTOPEN, drives the drawing through the MCP tool set against any OpenAI-compatible endpoint, native builds): no streaming replies; no web build; render images are always sent, so text-only models refuse them; the API key sits in plain text in the preferences file | 3–6 |
+| A3 | Markup Assist leftovers (MARKUPIMPORT reads PDF annotations with our own parser and PNG/JPG markups through the Assistant's vision model; MARKUPASSIST turns markups into MTEXT, TEXT, MLEADER and revision clouds): no markup paper (the PDF/image isn't shown underneath: needs ATTACH); encrypted PDFs, filters other than FlateDecode, damaged xrefs and rich text aren't read; the markup tag's DXF round trip is untested | 6–10 |
 
 ## Revision history
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-21 | minor | AI features: Assistant palette over an OpenAI-compatible endpoint (new `cadcraft-ai` crate shared with MCP, which gains `markup_import`), Smart Blocks (BCONVERT, -BCONVERT, BSEARCH, BDETECT, BREPLACE, INSERT `suggest`), MARKUPIMPORT (PDF annotations, image markups via the vision model) and MARKUPASSIST: A1–A3 narrowed |
 | 2026-10-16 | minor | ALIASEDIT typed or from Tools ▸ Customize opens the Command Aliases dialog (user aliases next to the built-in ones; Add, Edit, Remove; OK, Cancel, Apply), #1381: U12 and E5 narrowed |
 | 2026-10-16 | minor | MOCORO (Tools ▸ Express Tools ▸ Move/Copy/Rotate): select objects and a base point once, then Move, Copy, Rotate, Scale, Base and Undo until eXit, one undo step; JSON form `{base, ops}`: E3 narrowed |
 | 2026-10-16 | minor | MLEDIT Merged Tee (MT): the first multiline's outer elements stop at the second one's near side, which opens, and its inner elements run on to the second one's inner element: F21 narrowed, hours unchanged |

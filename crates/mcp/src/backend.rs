@@ -4,17 +4,9 @@ use std::io::{BufRead, BufReader, Write};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::time::Duration;
 
+use cadcraft_ai::Backend;
 use cadcraft_engine::Session;
 use serde_json::{Value, json};
-
-/// Something that answers control-channel methods (`engine.execute`, `cmdline.input`,
-/// `drawing.inspect`, `ui.render`…). See `cadcraft_ui_egui::control` for the full list.
-pub trait Backend {
-    fn call(&mut self, method: &str, params: Value) -> Result<Value, String>;
-    /// True when a real UI is attached (`ui.screenshot` works).
-    fn has_ui(&self) -> bool;
-    fn describe(&self) -> String;
-}
 
 /// A running CADCraft app reached through its loopback control port.
 pub struct Remote {

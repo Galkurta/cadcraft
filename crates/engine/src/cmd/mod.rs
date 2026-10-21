@@ -22,6 +22,7 @@ mod inquiry;
 mod layer;
 mod layout;
 mod lisp;
+mod markup;
 mod mleader_content;
 mod mleader_edit;
 mod modify;
@@ -36,6 +37,7 @@ pub use props::MatchProps;
 mod qselect;
 mod selecttools;
 mod settings;
+pub(crate) mod smartblocks;
 mod spline_opts;
 mod table;
 mod tolerance;
@@ -204,6 +206,8 @@ pub fn command_specs() -> &'static [CommandSpec] {
         v.extend(table::specs());
         v.extend(tolerance::specs());
         v.extend(txt2mtxt::specs());
+        v.extend(smartblocks::specs());
+        v.extend(markup::specs());
         v.extend(constraints::specs());
         v.extend(lisp::specs());
         v

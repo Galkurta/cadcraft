@@ -1358,3 +1358,26 @@
 	Discard	Скасувати зміни
 	Customize	Налаштування інтерфейсу
 	Edit Command Aliases (PGP)...	Редагувати псевдоніми команд (PGP)...
+# Assistant palette.
+	Assistant	Асистент
+	Close Assistant	Закрити асистента
+	Send	Надіслати
+	Stop	Зупинити
+	Settings	Налаштування
+	Base URL	Базова URL-адреса
+	API key	Ключ API
+	Use environment	Використати змінні середовища
+	Empty fields use CADCRAFT_AI_BASE_URL, CADCRAFT_AI_MODEL and CADCRAFT_AI_KEY (or OPENAI_API_KEY). Any OpenAI-compatible endpoint works: Ollama, LM Studio, OpenAI, OpenRouter, vLLM. Saved with your preferences on this computer, never in a drawing.	Порожні поля беруть значення з CADCRAFT_AI_BASE_URL, CADCRAFT_AI_MODEL та CADCRAFT_AI_KEY (або OPENAI_API_KEY). Підійде будь-яка OpenAI-сумісна кінцева точка: Ollama, LM Studio, OpenAI, OpenRouter, vLLM. Зберігається разом з вашими налаштуваннями на цьому комп'ютері, ніколи — у кресленні.
+	Ask the Assistant to draw or change something	Попросіть асистента щось накреслити або змінити
+	Stopping after the current request…	Зупинка після поточного запиту…
+	Working…	Працюю…
+	The Assistant is not available yet in the web build.	Асистент ще недоступний у веб-версії.
+# Smart Blocks and Markup Assist.
+	Smart Blocks	Розумні блоки
+	Convert to Block	Перетворити на блок
+	Convert to Block (command line)	Перетворити на блок (командний рядок)
+	Detect Repeated Groups	Виявити повторювані групи
+	Search for Similar Objects	Знайти подібні об’єкти
+	Replace Block	Замінити блок
+	Markup Import	Імпорт розміток
+	Markup Assist	Помічник розміток

@@ -36,7 +36,7 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("insert", "Block...", run_insert)
             .menu(&["Insert", "Block..."])
             .alias(&["i", "-insert", "ddinsert"])
-            .params("{name (\"*NAME\": exploded), file?: DXF/DWG path (defines or redefines block `name`, default the file name, from its model space; base point $INSBASE), at: [x,y], scale?: number | [x, y], rotation? (degrees), basePoint?: [x,y] (block coordinates), attribs?: {TAG: value}, explode?: bool}")
+            .params("{name (\"*NAME\": exploded), file?: DXF/DWG path (defines or redefines block `name`, default the file name, from its model space; base point $INSBASE), at: [x,y], scale?: number | [x, y], rotation? (degrees), basePoint?: [x,y] (block coordinates), attribs?: {TAG: value}, explode?: bool, suggest?: bool (`at` is the cursor: the insertion point and, unless `rotation` is given, the rotation follow how the block's existing references sit against the nearest line or polyline segment; adds `suggested`)}")
             .interactive(|_| Ok(Box::new(InsertM::default()))),
         CommandSpec::new("attdef", "Define Attributes...", run_attdef)
             .menu(&["Draw", "Block", "Define Attributes..."])
@@ -84,7 +84,7 @@ pub fn specs() -> Vec<CommandSpec> {
     .collect()
 }
 
-fn valid_block_name(n: &str) -> bool {
+pub(crate) fn valid_block_name(n: &str) -> bool {
     !n.trim().is_empty() && n.len() <= 255 && !n.starts_with('*') && !n.chars().any(|c| "<>/\\\":;?*|,=`".contains(c))
 }
 
@@ -285,15 +285,30 @@ fn run_insert(s: &mut Session, p: &Value) -> Result<Value> {
     if scale.x == 0.0 || scale.y == 0.0 {
         return Err(bad("insert", "scale cannot be 0"));
     }
-    let rot = f64_or(p, "rotation", 0.0).to_radians();
+    let mut rot = f64_or(p, "rotation", 0.0).to_radians();
     let vals = p.get("attribs").and_then(Value::as_object).cloned().unwrap_or_default();
+    // `suggest`: `at` is the cursor; the point and rotation follow the block's existing references.
+    let suggest = bool_or(p, "suggest", false);
+    let mut at = at;
+    let mut suggested = false;
+    if suggest && let Some(g) = smartblocks::suggest_placement(s, &name, at) {
+        at = g.at;
+        if p.get("rotation").is_none() {
+            rot = g.rotation;
+        }
+        suggested = true;
+    }
     let h = insert_with(s, &name, at, scale, rot, point_param(p, "basePoint"), &vals)?;
     if bool_or(p, "explode", false) {
         // The EXPLODE command body, not `execute`: INSERT records the one undo step.
         let explode = find_command("explode").ok_or_else(|| EngineError::UnknownCommand("explode".into()))?;
         return (explode.run)(s, &json!({ "handles": [h.hex()] }));
     }
-    Ok(attedit::with_unknown_tags(s, h, &vals, json!({ "handle": h.hex() })))
+    let mut r = attedit::with_unknown_tags(s, h, &vals, json!({ "handle": h.hex() }));
+    if suggest && let Some(o) = r.as_object_mut() {
+        o.insert("suggested".into(), json!(suggested));
+    }
+    Ok(r)
 }
 
 fn attdef_kind(s: &Session, tag: &str, prompt: &str, default: &str, at: Vec2, height: f64, invisible: bool) -> EntityKind {
@@ -579,6 +594,8 @@ struct InsertM {
     explode: bool,
     /// The file waiting for the Redefine answer.
     file: Option<insert_file::FileRef>,
+    /// Snap the insertion point and rotation to how the block's other references sit on walls.
+    suggest: bool,
 }
 
 impl InsertM {
@@ -671,7 +688,7 @@ impl Interactive for InsertM {
                 let name = self.file.as_ref().map(|f| f.name.clone()).unwrap_or_default();
                 Prompt::new(format!("Block \"{name}\" already exists. Redefine it?"), super::curves::KW).kw(&["Yes", "No"]).default("N")
             }
-            InsStage::Point => Prompt::new("Specify insertion point", Accept::POINT).kw(&["Basepoint", "Scale", "Rotate"]),
+            InsStage::Point => Prompt::new("Specify insertion point", Accept::POINT).kw(&["Basepoint", "Scale", "Rotate", "Suggest"]),
             InsStage::BasePoint => Prompt::new("Specify base point", Accept::POINT),
             InsStage::PresetScale => Prompt::new("Specify scale factor for XYZ axes", Accept::NUMBER).default("1"),
             InsStage::PresetRotation => Prompt::new("Specify rotation angle", Accept::NUMBER).default("0"),
@@ -724,12 +741,23 @@ impl Interactive for InsertM {
             }
             InsStage::Point => match i {
                 Input::Point(p) => {
-                    self.at = Some(p);
+                    let learned = if self.suggest { self.name.as_deref().and_then(|n| smartblocks::suggest_placement(s, n, p)) } else { None };
+                    if let Some(g) = learned {
+                        self.at = Some(g.at);
+                        self.rotation.get_or_insert(g.rotation);
+                    } else {
+                        self.at = Some(p);
+                    }
                     return self.advance(s);
                 }
                 Input::Keyword(k) if k == "Basepoint" => self.stage = InsStage::BasePoint,
                 Input::Keyword(k) if k == "Scale" => self.stage = InsStage::PresetScale,
                 Input::Keyword(k) if k == "Rotate" => self.stage = InsStage::PresetRotation,
+                // The next point follows how the block's other references sit on walls.
+                Input::Keyword(k) if k == "Suggest" => {
+                    self.suggest = !self.suggest;
+                    s.echo(if self.suggest { "Placement suggestion on." } else { "Placement suggestion off." });
+                }
                 _ => {}
             },
             InsStage::BasePoint => {

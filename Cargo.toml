@@ -22,6 +22,7 @@ cadcraft-fonts = { path = "crates/fonts" }
 cadcraft-render = { path = "crates/render" }
 cadcraft-io = { path = "crates/io" }
 cadcraft-engine = { path = "crates/engine" }
+cadcraft-ai = { path = "crates/ai" }
 cadcraft-ui-egui = { path = "crates/ui-egui" }
 cadcraft-mcp = { path = "crates/mcp" }
 # Which paths stored in a drawing (xrefs, data links) may be opened.
@@ -54,6 +55,8 @@ egui_kittest = "0.36"
 eframe = { version = "0.36", default-features = false }
 egui-wgpu = "0.36"
 rfd = "0.17"
+# Blocking HTTP client for the Assistant (native builds only; rustls TLS, default features).
+ureq = "3"
 arboard = { version = "3.6", default-features = false }
 
 [workspace.lints.rust]

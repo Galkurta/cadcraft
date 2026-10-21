@@ -248,6 +248,8 @@ pub struct CadApp {
     pub hatch_dlg: Option<hatchdlg::HatchDlgState>,
     /// The Edit Block Definition dialog ([`bedit`]).
     pub bedit: bedit::State,
+    /// The Assistant palette: its conversation and endpoint settings ([`palettes::assistant`]).
+    pub assistant: palettes::assistant::State,
 }
 
 impl CadApp {
@@ -288,6 +290,7 @@ impl CadApp {
             alias_dlg: None,
             hatch_dlg: None,
             bedit: bedit::State::default(),
+            assistant: palettes::assistant::State::default(),
         }
     }
 
@@ -383,6 +386,9 @@ impl CadApp {
         if !self.ui.recent_files.is_empty() {
             prefs["recentFiles"] = json!(self.ui.recent_files);
         }
+        if self.assistant.settings != palettes::assistant::Settings::default() {
+            prefs["assistant"] = json!(self.assistant.settings);
+        }
         prefs.to_string()
     }
 
@@ -406,6 +412,9 @@ impl CadApp {
         }
         if let Some(v) = v.get("saveVersion").and_then(Value::as_str).and_then(SaveVersion::parse) {
             self.ui.save_version = v.year().to_string();
+        }
+        if let Some(a) = v.get("assistant").and_then(|a| serde_json::from_value(a.clone()).ok()) {
+            self.assistant.settings = a;
         }
         if let Some(files) = v.get("recentFiles").and_then(Value::as_array) {
             self.ui.recent_files = files.iter().filter_map(Value::as_str).filter(|p| !p.is_empty()).take(RECENT_FILES).map(str::to_string).collect();
@@ -576,6 +585,7 @@ impl CadApp {
             self.shown_interface_scale = Some(scale);
         }
         self.drain_control(ctx);
+        palettes::assistant::pump(self, ctx);
         self.finish_opening();
         self.opening.show(ctx);
         if !self.synthetic.is_empty() {

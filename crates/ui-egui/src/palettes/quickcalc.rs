@@ -185,16 +185,7 @@ impl State {
 /// Open the palette. The first time it floats by the right edge of the drawing; afterwards it
 /// returns where it was closed.
 pub fn open(app: &mut CadApp) -> Result<Value, String> {
-    let panel = crate::docking::Panel::QuickCalc;
-    let first = !app.ui.docking.layout.contains(&panel) && !app.ui.docking.hidden.iter().any(|(p, _)| *p == panel);
-    let r = crate::docking::command(app, false, &json!({ "operation": "open", "panel": panel.id() }))?;
-    if !first {
-        return Ok(r);
-    }
-    let area = app.canvas.rect.unwrap_or(egui::Rect::from_min_size(egui::pos2(220.0, 80.0), vec2(1000.0, 800.0)));
-    let (w, h) = (300.0, (area.height() - 40.0).clamp(200.0, 560.0));
-    let rect = [area.right() - w - 16.0, area.top() + 24.0, w, h];
-    crate::docking::command(app, false, &json!({ "operation": "float", "panel": panel.id(), "rect": rect }))
+    crate::docking::open_floating(app, crate::docking::Panel::QuickCalc, 300.0)
 }
 
 pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
