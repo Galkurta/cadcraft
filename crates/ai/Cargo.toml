@@ -10,9 +10,18 @@ workspace = true
 
 [dependencies]
 cadcraft-engine = { workspace = true }
+serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 
-# Native only: the web build has no HTTP client here (`chat` reports "not available yet").
+# Native: a blocking HTTP client on a worker thread, and the OS credential store for the API key.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 ureq = { workspace = true }
+keyring = { workspace = true }
+
+# Web: the same request over the browser's fetch API (same versions eframe already pulls in).
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+js-sys = "0.3"
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+web-sys = { version = "0.3", features = ["Window", "Request", "RequestInit", "RequestMode", "Response", "Headers", "ReadableStream", "ReadableStreamDefaultReader", "AbortController", "AbortSignal"] }

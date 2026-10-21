@@ -2,19 +2,24 @@
 //! the Assistant), a client for one OpenAI-compatible Chat Completions endpoint, the Assistant's
 //! agent loop and the recognition of image markups by a vision model.
 //!
-//! Native builds only talk to the network; in the web build [`chat`] reports "not available yet".
+//! Native builds run a request on a worker thread, the web build over the browser's `fetch`; in
+//! both the Assistant polls a [`Driver`] every frame, so nothing here blocks the UI. The API key
+//! lives in the OS credential store ([`keystore`]).
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 #![forbid(unsafe_code)]
 
 mod agent;
 mod client;
+pub mod keystore;
 mod markup;
 mod tools;
+mod transport;
 
-pub use agent::{Agent, Event, SYSTEM_PROMPT};
-pub use client::{AiError, Config, Image, Message, Reply, ToolCall, chat};
+pub use agent::{Agent, Driver, Event, SYSTEM_PROMPT};
+pub use client::{AiError, Config, Image, Message, Reply, ToolCall, Vision, chat};
 pub use markup::recognize_image_markups;
 pub use tools::{call_tool, call_tool_with, tool_definitions};
+pub use transport::Wake;
 
 use serde_json::Value;
 

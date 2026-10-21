@@ -14,6 +14,7 @@ mod dxf_write;
 mod dxf_xref;
 pub mod pdf;
 pub mod pdf_markup;
+mod pdf_page;
 pub mod plotter;
 pub mod svg;
 mod svg_read;
@@ -28,6 +29,12 @@ pub use cadcraft_dxf::Version;
 pub use dxf_read::entity_from_groups;
 pub use dxf_write::entity_groups;
 pub use pdf::{PdfOptions, pdf, plot};
+
+/// Teach the picture cache ([`cadcraft_render::images`]) to draw PDF pages (PDF underlays).
+/// Idempotent; the engine calls it when a session starts.
+pub fn register_image_decoders() {
+    cadcraft_render::images::set_pdf_decoder(cadcraft_render::images::PdfDecoder { page_size: pdf_page::page_size, render: pdf_page::render });
+}
 
 /// How a drawing is saved as DXF or DWG.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

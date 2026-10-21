@@ -12,6 +12,7 @@ pub mod aliasdlg;
 pub mod animation;
 pub mod autosave;
 pub mod bedit;
+pub mod blocks_palette;
 pub mod canvas;
 pub mod chrome;
 pub mod clipboard;
@@ -44,6 +45,7 @@ pub mod parametric;
 pub mod plotstyles;
 pub mod quick;
 pub mod shortcut_menus;
+pub mod smartblocks_dlg;
 pub mod theme;
 pub mod viewcube;
 pub mod vpscale;
@@ -250,6 +252,8 @@ pub struct CadApp {
     pub bedit: bedit::State,
     /// The Assistant palette: its conversation and endpoint settings ([`palettes::assistant`]).
     pub assistant: palettes::assistant::State,
+    /// The Smart Blocks dialogs and the Blocks palette's state ([`smartblocks_dlg`], [`blocks_palette`]).
+    pub smart: smartblocks_dlg::State,
 }
 
 impl CadApp {
@@ -291,6 +295,7 @@ impl CadApp {
             hatch_dlg: None,
             bedit: bedit::State::default(),
             assistant: palettes::assistant::State::default(),
+            smart: smartblocks_dlg::State::default(),
         }
     }
 
@@ -386,8 +391,8 @@ impl CadApp {
         if !self.ui.recent_files.is_empty() {
             prefs["recentFiles"] = json!(self.ui.recent_files);
         }
-        if self.assistant.settings != palettes::assistant::Settings::default() {
-            prefs["assistant"] = json!(self.assistant.settings);
+        if let Some(a) = self.assistant.prefs_value() {
+            prefs["assistant"] = a;
         }
         prefs.to_string()
     }
@@ -414,7 +419,7 @@ impl CadApp {
             self.ui.save_version = v.year().to_string();
         }
         if let Some(a) = v.get("assistant").and_then(|a| serde_json::from_value(a.clone()).ok()) {
-            self.assistant.settings = a;
+            self.assistant.load_settings(a);
         }
         if let Some(files) = v.get("recentFiles").and_then(Value::as_array) {
             self.ui.recent_files = files.iter().filter_map(Value::as_str).filter(|p| !p.is_empty()).take(RECENT_FILES).map(str::to_string).collect();
@@ -596,6 +601,7 @@ impl CadApp {
         self.gpu_fault_tick(ctx);
         managers::plot_window_resume(self, ctx);
         hatchdlg::resume(self);
+        smartblocks_dlg::resume(self);
         self.autosave_tick(ctx);
         menus::shortcuts(self, ctx);
         #[cfg(not(target_arch = "wasm32"))]

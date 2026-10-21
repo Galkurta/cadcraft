@@ -1367,11 +1367,17 @@
 	Base URL	Базова URL-адреса
 	API key	Ключ API
 	Use environment	Використати змінні середовища
-	Empty fields use CADCRAFT_AI_BASE_URL, CADCRAFT_AI_MODEL and CADCRAFT_AI_KEY (or OPENAI_API_KEY). Any OpenAI-compatible endpoint works: Ollama, LM Studio, OpenAI, OpenRouter, vLLM. Saved with your preferences on this computer, never in a drawing.	Порожні поля беруть значення з CADCRAFT_AI_BASE_URL, CADCRAFT_AI_MODEL та CADCRAFT_AI_KEY (або OPENAI_API_KEY). Підійде будь-яка OpenAI-сумісна кінцева точка: Ollama, LM Studio, OpenAI, OpenRouter, vLLM. Зберігається разом з вашими налаштуваннями на цьому комп'ютері, ніколи — у кресленні.
+	Empty fields use CADCRAFT_AI_BASE_URL, CADCRAFT_AI_MODEL, CADCRAFT_AI_KEY (or OPENAI_API_KEY) and CADCRAFT_AI_VISION. Any OpenAI-compatible endpoint works: Ollama, LM Studio, OpenAI, OpenRouter, vLLM. The API key is kept in your system's credential store; the rest is saved with your preferences on this computer, never in a drawing.	Порожні поля беруть значення з CADCRAFT_AI_BASE_URL, CADCRAFT_AI_MODEL, CADCRAFT_AI_KEY (або OPENAI_API_KEY) та CADCRAFT_AI_VISION. Підійде будь-яка OpenAI-сумісна кінцева точка: Ollama, LM Studio, OpenAI, OpenRouter, vLLM. Ключ API зберігається в системному сховищі облікових даних; решта — разом з вашими налаштуваннями на цьому комп'ютері, ніколи — у кресленні.
 	Ask the Assistant to draw or change something	Попросіть асистента щось накреслити або змінити
-	Stopping after the current request…	Зупинка після поточного запиту…
+	Stopping…	Зупинка…
 	Working…	Працюю…
-	The Assistant is not available yet in the web build.	Асистент ще недоступний у веб-версії.
+	Auto	Авто
+	Image input	Передавання зображень
+	Show more	Показати більше
+	Show less	Показати менше
+	The credential store is unavailable ({reason}); the key is kept in your preferences file.	Сховище облікових даних недоступне ({reason}); ключ зберігається у файлі налаштувань.
+	Image input: Auto sends images and stops sending them if the model refuses; Off never sends them (marked-up images can't be read then).	Передавання зображень: «Авто» надсилає зображення й припиняє, якщо модель їх відхиляє; «Вимкнено» не надсилає їх ніколи (тоді розпізнати зображення з позначками неможливо).
+	In the browser the endpoint must allow cross-origin requests (CORS) from this page; a local Ollama needs OLLAMA_ORIGINS set to this page's address. The key is saved with your preferences in this browser.	У браузері кінцева точка має дозволяти міждоменні запити (CORS) з цієї сторінки; локальній Ollama потрібно задати OLLAMA_ORIGINS з адресою цієї сторінки. Ключ зберігається разом з налаштуваннями в цьому браузері.
 # Smart Blocks and Markup Assist.
 	Smart Blocks	Розумні блоки
 	Convert to Block	Перетворити на блок
@@ -1381,3 +1387,28 @@
 	Replace Block	Замінити блок
 	Markup Import	Імпорт розміток
 	Markup Assist	Помічник розміток
+# Smart Blocks dialogs and the Blocks palette.
+	Block name	Назва блока
+	Base point	Базова точка
+	Lower left of the objects	Лівий нижній кут об’єктів
+	Pick point	Вказати точку
+	Include existing blocks	Враховувати наявні блоки
+	Convert objects to layer 0	Перенести об’єкти на шар 0
+	Instances found: {n}	Знайдено екземплярів: {n}
+	Instances found: none	Знайдено екземплярів: немає
+	The search was cut short; there may be more.	Пошук перервано; екземплярів може бути більше.
+	There is no other block to replace with.	Немає іншого блока для заміни.
+	Replace {n} block reference(s) with the most similar block:	Замінити посилання на блок ({n}) найподібнішим блоком:
+	Replace	Замінити
+	Blocks Palette	Палітра блоків
+	No drawing is open.	Немає відкритого креслення.
+	Suggest placement	Пропонувати розміщення
+	Insert follows how the block's other references sit on the walls.	Вставлення повторює те, як інші посилання на цей блок розташовані на стінах.
+	Suggested	Рекомендовані
+	All blocks	Усі блоки
+# Attach, image and PDF underlay commands.
+	Attach...	Приєднати...
+	Attach Image	Приєднати зображення
+	Attach PDF Underlay	Приєднати підкладку PDF
+	Raster Image Reference...	Посилання на растрове зображення...
+	PDF Underlay...	Підкладка PDF...

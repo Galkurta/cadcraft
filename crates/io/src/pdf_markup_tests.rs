@@ -2,6 +2,14 @@ use serde_json::{Value, json};
 
 use super::*;
 
+#[path = "pdf_markup_enc_tests.rs"]
+mod enc;
+
+/// The tests read with no password unless they say otherwise.
+fn pdf_markups(bytes: &[u8], page: usize) -> Result<PdfMarkups> {
+    super::pdf_markups(bytes, page, "")
+}
+
 /// Annotations of a 200 x 100 point page: a FreeText, a Square with a cloud border and a
 /// comment, an Ink stroke and a Line with an arrow at its end.
 const OBJS: [&str; 7] = [
@@ -15,6 +23,11 @@ const OBJS: [&str; 7] = [
 ];
 
 fn classic(objs: &[&str]) -> Vec<u8> {
+    classic_extra(objs, "")
+}
+
+/// A classic file whose trailer also says `extra`.
+fn classic_extra(objs: &[&str], extra: &str) -> Vec<u8> {
     let mut f = b"%PDF-1.4\n".to_vec();
     let mut offs = Vec::new();
     for (i, o) in objs.iter().enumerate() {
@@ -26,13 +39,39 @@ fn classic(objs: &[&str]) -> Vec<u8> {
     for o in offs {
         f.extend(format!("{o:010} 00000 n \n").bytes());
     }
-    f.extend(format!("trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n", objs.len() + 1).bytes());
+    f.extend(format!("trailer\n<< /Size {} /Root 1 0 R {extra} >>\nstartxref\n{xref}\n%%EOF\n", objs.len() + 1).bytes());
     f
 }
+
+/// How `compressed_with` stores its streams.
+struct Spec<'a> {
+    /// The `/Filter` value, and the `/DecodeParms` of the xref stream and of the object stream.
+    filter: &'a str,
+    xparms: &'a str,
+    sparms: &'a str,
+    /// Encodes through the whole filter chain.
+    enc: &'a dyn Fn(&[u8]) -> Vec<u8>,
+    /// The xref rows are PNG "Up" predicted (the xref `/DecodeParms` must say so).
+    predict: bool,
+    /// Encrypts the object stream with this `seal` (object number, bytes) and declares this
+    /// `/Encrypt` and `/ID` in the xref stream's dictionary.
+    crypt: Option<(&'a dyn Fn(u32, &[u8]) -> Vec<u8>, String)>,
+}
+
+fn flate(d: &[u8]) -> Vec<u8> {
+    miniz_oxide::deflate::compress_to_vec_zlib(d, 6)
+}
+
+const FLATE_UP: Spec =
+    Spec { filter: "/FlateDecode", xparms: "/DecodeParms << /Predictor 12 /Columns 4 >>", sparms: "", enc: &flate, predict: true, crypt: None };
 
 /// The same objects inside an object stream, found through a compressed xref stream with a PNG
 /// "Up" predictor.
 fn compressed(objs: &[&str]) -> Vec<u8> {
+    compressed_with(objs, &FLATE_UP)
+}
+
+fn compressed_with(objs: &[&str], spec: &Spec) -> Vec<u8> {
     let (mut head, mut body) = (String::new(), String::new());
     for (i, o) in objs.iter().enumerate() {
         head.push_str(&format!("{} {} ", i + 1, body.len()));
@@ -40,11 +79,23 @@ fn compressed(objs: &[&str]) -> Vec<u8> {
         body.push('\n');
     }
     let first = head.len();
-    let objstm = miniz_oxide::deflate::compress_to_vec_zlib(format!("{head}{body}").as_bytes(), 6);
+    let n = objs.len();
+    let mut objstm = (spec.enc)(format!("{head}{body}").as_bytes());
+    if let Some((seal, _)) = &spec.crypt {
+        objstm = seal((n + 1) as u32, &objstm);
+    }
     let mut f = b"%PDF-1.5\n".to_vec();
     let stm_off = f.len();
-    let n = objs.len();
-    f.extend(format!("{} 0 obj\n<< /Type /ObjStm /N {n} /First {first} /Filter /FlateDecode /Length {} >>\nstream\n", n + 1, objstm.len()).bytes());
+    f.extend(
+        format!(
+            "{} 0 obj\n<< /Type /ObjStm /N {n} /First {first} /Filter {} {} /Length {} >>\nstream\n",
+            n + 1,
+            spec.filter,
+            spec.sparms,
+            objstm.len()
+        )
+        .bytes(),
+    );
     f.extend(&objstm);
     f.extend(b"\nendstream\nendobj\n");
     let xref_off = f.len();
@@ -58,16 +109,23 @@ fn compressed(objs: &[&str]) -> Vec<u8> {
     let mut raw = Vec::new();
     let mut prev = [0u8; 4];
     for r in &rows {
-        raw.push(2);
-        raw.extend(r.iter().zip(prev).map(|(a, b)| a.wrapping_sub(b)));
+        if spec.predict {
+            raw.push(2);
+            raw.extend(r.iter().zip(prev).map(|(a, b)| a.wrapping_sub(b)));
+        } else {
+            raw.extend(r);
+        }
         prev = *r;
     }
-    let data = miniz_oxide::deflate::compress_to_vec_zlib(&raw, 6);
+    let data = (spec.enc)(&raw);
+    let extra = spec.crypt.as_ref().map_or(String::new(), |(_, e)| e.clone());
     f.extend(
         format!(
-            "{} 0 obj\n<< /Type /XRef /Size {} /W [1 2 1] /Root 1 0 R /Filter /FlateDecode /DecodeParms << /Predictor 12 /Columns 4 >> /Length {} >>\nstream\n",
+            "{} 0 obj\n<< /Type /XRef /Size {} /W [1 2 1] /Root 1 0 R {extra} /Filter {} {} /Length {} >>\nstream\n",
             n + 2,
             n + 3,
+            spec.filter,
+            spec.xparms,
             data.len()
         )
         .bytes(),

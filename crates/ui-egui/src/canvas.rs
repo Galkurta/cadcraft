@@ -557,6 +557,7 @@ fn draw_vp_content(c: &mut VpContent, gpu: bool, p: &egui::Painter, f: &VpFrame,
         c.mesh_key = Some(key);
         c.mesh_origin = origin;
     }
+    pictures::draw_all(&p.with_clip_rect(xf.rect.intersect(p.clip_rect())), xf, &c.list, bg);
     let center = xf.rect.center();
     p.add(egui_wgpu::Callback::new_paint_callback(
         xf.rect,
@@ -823,6 +824,7 @@ pub(crate) fn draw_list(p: &egui::Painter, xf: &Xf, list: &DisplayList, bg: Rgb,
                     shapes.push(Shape::rect_filled(Rect::from_center_size(xf.to_screen(*q), vec2(1.5, 1.5)), 0.0, col));
                 }
             }
+            Kind::Image(_) => shapes.extend(pictures::shape(p.ctx(), xf, list, prim, bg)),
             Kind::Infinite { ray } => {
                 if let (Some(b), Some(d)) = (pts.first(), pts.get(1))
                     && let Some(seg) = clip_infinite(xf, *b, *d, ray)
@@ -979,6 +981,8 @@ fn draw_list_gpu(c: &mut CanvasState, p: &egui::Painter, xf: &Xf, bg: Rgb, lwdis
         c.mesh_origin = origin;
         c.mesh_ms = crate::now_ms() - t0;
     }
+    // Pictures are textured quads under the linework.
+    pictures::draw_all(p, xf, list, bg);
     let center = xf.rect.center();
     p.add(egui_wgpu::Callback::new_paint_callback(
         xf.rect,
@@ -1043,7 +1047,8 @@ pub(crate) fn draw_highlight(p: &egui::Painter, xf: &Xf, list: &DisplayList, pri
     for prim in prims.iter().filter_map(|&i| list.prims.get(i)) {
         let pts = list.points(prim);
         match prim.kind {
-            Kind::Polyline => line(pts.iter().map(|q| xf.to_screen(*q)).collect(), &mut shapes),
+            // A picture is highlighted by its frame.
+            Kind::Polyline | Kind::Image(_) => line(pts.iter().map(|q| xf.to_screen(*q)).collect(), &mut shapes),
             Kind::Infinite { ray } => {
                 if let (Some(b), Some(d)) = (pts.first(), pts.get(1))
                     && let Some(seg) = clip_infinite(xf, *b, *d, ray)
@@ -2903,6 +2908,7 @@ mod blockedit;
 mod compare;
 
 /// Background rebuilds of the display list for a new view.
+mod pictures;
 mod rebuild;
 
 #[cfg(test)]

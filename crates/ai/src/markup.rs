@@ -2,7 +2,7 @@
 
 use serde_json::{Value, json};
 
-use crate::{AiError, Config, Image, Message, chat};
+use crate::{AiError, Config, Image, Message, Vision, chat};
 
 const PROMPT: &str = "You read marked-up drawing sheets. The image is a sheet with a reviewer's handwritten or drawn \
 markups (red pen, clouds, arrows, notes). List every markup as JSON and answer with ONLY a JSON array, no prose. \
@@ -87,8 +87,13 @@ fn parse_markups(reply: &str) -> Result<Vec<Value>, AiError> {
 }
 
 /// Ask the vision model for the markups in a PNG or JPEG (`mime`: `image/png` or `image/jpeg`).
-/// Blocks: call it from a worker thread.
+/// Blocks: call it from a worker thread. Needs a model that sees images: `Vision::Off` is an error.
 pub fn recognize_image_markups(cfg: &Config, bytes: &[u8], mime: &str) -> Result<Vec<Value>, AiError> {
+    if cfg.vision == Vision::Off {
+        return Err(AiError::Config(
+            "reading a marked-up image needs a model that can see images, and vision is set to Off (Assistant settings or CADCRAFT_AI_VISION)".into(),
+        ));
+    }
     let image = Image { mime: mime.to_string(), base64: cadcraft_engine::cmd::file::base64_encode(bytes) };
     let messages = [Message::System(PROMPT.into()), Message::User { text: "Read the markups in this image.".into(), images: vec![image] }];
     let reply = chat(cfg, &messages, &Value::Null)?;

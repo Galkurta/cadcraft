@@ -109,6 +109,8 @@ fn missing_marked_ui_literals(language: &str) -> BTreeSet<String> {
         include_str!("../quick.rs"),
         include_str!("../vpscale.rs"),
         include_str!("../options/dialog.rs"),
+        include_str!("../smartblocks_dlg.rs"),
+        include_str!("../blocks_palette.rs"),
     ];
     let mut missing = BTreeSet::new();
     for source in sources {
@@ -379,7 +381,6 @@ fn dialogs_render_in_ukrainian_and_keep_their_source_ids() {
         ("dsettings", "Налаштування креслення"),
         ("about", "Про CADCraft"),
         ("commands", "Довідник команд"),
-        ("blocks", "Блоки"),
         ("layers", "Диспетчер властивостей шарів"),
         ("qselect", "Швидкий вибір"),
         ("parameters", "Диспетчер параметрів"),
@@ -529,7 +530,6 @@ fn czech_dialogs_render_with_stable_ids() {
         ("dsettings", "Nastavení kreslení"),
         ("about", "O aplikaci CADCraft"),
         ("commands", "Přehled příkazů"),
-        ("blocks", "Bloky"),
         ("layers", "Správce vlastností hladin"),
         ("qselect", "Rychlý výběr"),
         ("parameters", "Správce parametrů"),
@@ -756,7 +756,6 @@ fn korean_dialogs_keep_source_ids() {
         ("dsettings", "Drafting Settings"),
         ("about", "About CADCraft"),
         ("commands", "Command Reference"),
-        ("blocks", "Blocks"),
         ("layers", "Layer Properties Manager"),
         ("qselect", "Quick Select"),
         ("parameters", "Parameters Manager"),
@@ -884,7 +883,6 @@ fn swedish_dialogs_render_with_stable_ids() {
     for (dialog, heading) in [
         ("dsettings", "Ritinställningar"),
         ("about", "Om CADCraft"),
-        ("blocks", "Block"),
         ("layers", "Hantera lageregenskaper"),
         ("qselect", "Snabbmarkering"),
         ("parameters", "Hantera parametrar"),
@@ -988,7 +986,6 @@ fn hungarian_dialogs_render_with_stable_ids() {
     for (dialog, heading) in [
         ("dsettings", "Rajzolási beállítások"),
         ("about", "A CADCraft névjegye"),
-        ("blocks", "Blokk"),
         ("layers", "Rétegtulajdonság-kezelő"),
         ("qselect", "Gyorskijelölés"),
         ("parameters", "Paraméterkezelő"),
@@ -1095,7 +1092,6 @@ fn turkish_dialogs_render_with_stable_ids() {
     for (dialog, heading) in [
         ("dsettings", "Çizim Ayarları"),
         ("about", "CADCraft Hakkında"),
-        ("blocks", "Bloklar"),
         ("layers", "Katman Özellikleri Yöneticisi"),
         ("qselect", "Hızlı Seçim"),
         ("parameters", "Parametre Yöneticisi"),

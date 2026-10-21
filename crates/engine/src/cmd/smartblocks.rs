@@ -27,6 +27,8 @@ const MAX_SEGS: usize = 20_000;
 const MAX_REFS: usize = 2_000;
 /// Most ranked blocks BREPLACE reports.
 const MAX_RANKED: usize = 50;
+/// Objects whose shape BREPLACE `shapes` ranks by.
+const MAX_SHAPES: usize = 2_000;
 /// Offsets within this count as the same placement.
 const PLACE_TOL: f64 = 1e-6;
 
@@ -37,8 +39,9 @@ pub fn specs() -> Vec<CommandSpec> {
             .params(
                 "{handles? (default the selection), name? (default a new SMARTBLOCKn), base?: [x,y] (default the lower left of the objects), \
                  includeExisting? (also block references of identical geometry; default BCONVERTINCLUDEEXISTINGBLOCKS), layer0? (the block's objects on layer 0; default BCONVERTLAYER), \
-                 scaled? (default false: also copies at another size), tolerance? (drawing units)} → {block, converted, handles, notes?}: \
-                 the objects and every identical instance in the drawing become references to one new block",
+                 scaled? (default false: also copies at another size), tolerance? (drawing units), dryRun? (default false: only count; the drawing is not changed) } → {block, converted, handles, notes?} \
+                 (dryRun: {dryRun: true, block (the default name), instances (the objects and the identical ones found), truncated}): \
+                 the objects and every identical instance in the drawing become references to one new block. In the app, BCONVERT typed or from a menu opens the Convert to Block dialog, which runs this with its choices",
             )
             .interactive(|_| Ok(Box::new(BConvertM::new(false)))),
         CommandSpec::new("-bconvert", "Convert to Block (command line)", run_bconvert)
@@ -61,7 +64,7 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("breplace", "Replace Block", run_breplace)
             .menu(&["Insert", "Smart Blocks", "Replace Block"])
             .params(
-                "{handles? (block references; default the selection), with? (a block name)} → {ranking: [{name, distance, similarity}]} without `with`; \
+                "{handles? (block references; default the selection), with? (a block name), shapes? (default false: rank by the shape of any objects, not only block references)} → {ranking: [{name, distance, similarity}]} without `with`; \
                  with it the references take that block, keeping insertion point, rotation, scale, layer and the attribute values whose tags exist",
             )
             .interactive(|_| Ok(Box::new(BReplaceM::default()))),
@@ -78,7 +81,12 @@ struct Sample {
 }
 
 fn unsupported(cmd: &str) -> EngineError {
-    bad(cmd, format!("{cmd} matches at most {MAX_GROUP} lines, polylines, arcs, circles, ellipses, points, text and block references"))
+    bad(
+        cmd,
+        format!(
+            "{cmd} matches at most {MAX_GROUP} lines, polylines, arcs, circles, ellipses, points, text, hatches, splines, dimensions and block references"
+        ),
+    )
 }
 
 /// The distinct existing objects among `hs`.
@@ -260,14 +268,16 @@ fn new_block_name(s: &Session, p: &Value, cmd: &str) -> Result<String> {
 
 fn run_bconvert(s: &mut Session, p: &Value) -> Result<Value> {
     let ents = sample_ents(s, &targets(s, p)?, "bconvert")?;
-    let name = new_block_name(s, p, "bconvert")?;
+    let dry = bool_or(p, "dryRun", false);
+    // A count only: the name given does not matter yet; the one that would be used by default is reported.
+    let name = if dry { fresh_name(s.doc()?) } else { new_block_name(s, p, "bconvert")? };
     let base = point_param(p, "base").unwrap_or_else(|| s.doc().map_or(Vec2::ZERO, |d| default_base(d, &ents)));
     let to_layer0 = layer0(s, p);
     let handles: Vec<Handle> = ents.iter().map(|e| e.handle).collect();
     let mut notes = Vec::new();
     let mut repl = Vec::new();
     match sample_of(&ents, tolerance("bconvert", p)?) {
-        None => notes.push(format!("Only the selection was converted: identical instances are found among at most {MAX_GROUP} lines, polylines, arcs, circles, ellipses, points, text and block references.")),
+        None => notes.push(format!("Only the selection was converted: identical instances are found among at most {MAX_GROUP} lines, polylines, arcs, circles, ellipses, points, text, hatches, splines, dimensions and block references.")),
         Some(sm) => {
             let (pool, found) = find(s, &sm, bool_or(p, "scaled", false), include_existing(s, p))?;
             let mut taken: HashSet<Handle> = handles.iter().copied().collect();
@@ -283,6 +293,10 @@ fn run_bconvert(s: &mut Session, p: &Value) -> Result<Value> {
                 notes.push("The search was cut short; further identical instances may remain.".into());
             }
         }
+    }
+    if dry {
+        let truncated = notes.iter().any(|n| n.starts_with("The search"));
+        return Ok(json!({ "dryRun": true, "block": name, "instances": 1 + repl.len(), "truncated": truncated, "notes": notes }));
     }
     let made = convert(s, &handles, &name, base, to_layer0, &repl)?;
     let mut r = json!({ "block": name, "converted": made.len(), "handles": hex(&made) });
@@ -476,17 +490,27 @@ fn references(d: &Drawing, hs: &[Handle]) -> Vec<Handle> {
     hs.iter().filter(|h| seen.insert(**h)).filter(|h| d.entity(**h).is_some_and(|e| matches!(e.kind, EntityKind::Insert(_)))).copied().collect()
 }
 
-/// Every other block by how closely its shape resembles the blocks `refs` reference.
-fn rank(d: &Drawing, refs: &[Handle]) -> Vec<(String, f64)> {
+/// Every other block by how closely its shape resembles the blocks the references among `hs`
+/// use; with `shapes`, also the other objects of `hs`, as one more shape.
+fn rank(d: &Drawing, hs: &[Handle], shapes: bool) -> Vec<(String, f64)> {
     let mut used: Vec<String> = Vec::new();
-    for h in refs {
-        if let Some(Entity { kind: EntityKind::Insert(i), .. }) = d.entity(*h).map(Arc::as_ref)
-            && !used.iter().any(|u| u.eq_ignore_ascii_case(&i.block))
-        {
-            used.push(i.block.clone());
+    let mut others: Vec<&EntityKind> = Vec::new();
+    let mut seen = HashSet::new();
+    for e in hs.iter().filter(|h| seen.insert(**h)).filter_map(|h| d.entity(*h)) {
+        match &e.kind {
+            EntityKind::Insert(i) => {
+                if !used.iter().any(|u| u.eq_ignore_ascii_case(&i.block)) {
+                    used.push(i.block.clone());
+                }
+            }
+            k if shapes && others.len() < MAX_SHAPES => others.push(k),
+            _ => {}
         }
     }
-    let sources: Vec<shape::Sig> = used.iter().filter_map(|n| d.block(n)).map(|b| shape::block_sig(b)).collect();
+    let mut sources: Vec<shape::Sig> = used.iter().filter_map(|n| d.block(n)).map(|b| shape::block_sig(b)).collect();
+    if !others.is_empty() {
+        sources.push(shape::sig_of(others.into_iter()));
+    }
     if sources.is_empty() {
         return Vec::new();
     }
@@ -541,14 +565,19 @@ fn replace_refs(s: &mut Session, refs: &[Handle], with: &str) -> Result<(String,
 }
 
 fn run_breplace(s: &mut Session, p: &Value) -> Result<Value> {
-    let refs = references(s.doc()?, &targets(s, p)?);
-    if refs.is_empty() {
+    let hs = targets(s, p)?;
+    let refs = references(s.doc()?, &hs);
+    let shapes = bool_or(p, "shapes", false);
+    if refs.is_empty() && !(shapes && !hs.is_empty()) {
         return Err(bad("breplace", "select block references"));
     }
     let Some(with) = str_param(p, "with") else {
-        let ranking = rank(s.doc()?, &refs);
+        let ranking = rank(s.doc()?, &hs, shapes);
         return Ok(json!({ "ranking": ranking_json(&ranking) }));
     };
+    if refs.is_empty() {
+        return Err(bad("breplace", "select block references"));
+    }
     let (name, done, locked) = replace_refs(s, &refs, with)?;
     s.set_selection(refs.clone());
     let mut r = json!({ "block": name, "replaced": done, "handles": hex(&refs) });
@@ -573,7 +602,7 @@ impl BReplaceM {
             s.echo("No block references selected.");
             return Ok(Step::Done);
         }
-        self.ranked = rank(s.doc()?, &self.refs).into_iter().map(|(n, _)| n).collect();
+        self.ranked = rank(s.doc()?, &self.refs, false).into_iter().map(|(n, _)| n).collect();
         if self.ranked.is_empty() {
             s.echo("There is no other block to replace with.");
             return Ok(Step::Done);

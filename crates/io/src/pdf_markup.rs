@@ -1,24 +1,33 @@
 //! A minimal PDF reader for review markups: the annotations of one page as markup JSON
 //! (normalized page coordinates `[u, v]`, origin top left, v down), so MARKUPIMPORT can turn a
-//! reviewer's comments into drawing objects.
+//! reviewer's comments into drawing objects, and the decoded content of a page for the plotting
+//! interpreter.
 //!
 //! Our own parser (clean-room, from the public PDF file structure): classic xref tables and xref
-//! streams (with PNG predictors), object streams, FlateDecode, the page tree with inherited
-//! `/MediaBox` and `/Rotate`, and the annotation types of a review: FreeText, Text (sticky note),
-//! Square, Circle, Line, PolyLine, Polygon (a cloud with `/BE /S /C` or `/IT /PolygonCloud`) and
-//! Ink. Nothing here draws or renders. The file is hostile input: every count, depth, array and
-//! inflated size is capped, objects are read through `get` and `Option`, and a damaged file is an
-//! error or a page with fewer markups, never a panic.
+//! streams (with predictors), object streams, the filters Flate, LZW, ASCIIHex, ASCII85 and
+//! RunLength (chains included), the standard security handler (RC4 and AES, user password; see
+//! `crypt`), a damaged or missing xref rebuilt by scanning for `N G obj`, the page tree with
+//! inherited `/MediaBox`, `/CropBox` and `/Rotate`, and the annotation types of a review:
+//! FreeText, Text (sticky note), Square, Circle, Line, PolyLine, Polygon (a cloud with `/BE /S /C`
+//! or `/IT /PolygonCloud`) and Ink; `/RC` rich text is read as plain text. Nothing here draws or
+//! renders. The file is hostile input: every count, depth, array and inflated size is capped,
+//! objects are read through `get` and `Option`, and a damaged file is an error or a page with
+//! fewer markups, never a panic.
 //!
-//! Not read (ponytail: add when a real file needs it): encrypted files, files whose xref is
-//! damaged beyond `startxref` (no rebuild by scanning), the filters other than FlateDecode,
-//! `/CropBox`, rich text (`/RC`) and appearance streams.
+//! Not read (ponytail: add when a real file needs it): the owner password, public-key handlers,
+//! the image filters (DCT, JBIG2, CCITT, JPX: such a stream is skipped) and appearance streams.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use serde_json::{Value, json};
 
 use crate::{IoError, Result};
+
+mod crypt;
+mod filters;
+mod rich;
+
+use crypt::Crypt;
 
 const MAX_DEPTH: usize = 32;
 const MAX_ARRAY: usize = 100_000;
@@ -41,14 +50,16 @@ type Dict = BTreeMap<String, Obj>;
 #[derive(Clone, Debug)]
 enum Obj {
     Null,
+    Bool(bool),
     Num(f64),
     Name(String),
     Str(Vec<u8>),
     Arr(Vec<Obj>),
     Dict(Dict),
     Ref(u32),
-    /// A stream: its dictionary and the byte range of its raw data in the file.
-    Stream(Dict, usize, usize),
+    /// A stream: its dictionary, the byte range of its raw data in the file and its object id
+    /// (number, generation; the key of its encryption).
+    Stream(Dict, usize, usize, (u32, u16)),
 }
 
 /// The markups of one page, in the page's displayed (rotated) size in points.
@@ -96,23 +107,10 @@ pub fn image_size(b: &[u8]) -> Option<(u32, u32)> {
     None
 }
 
-/// The annotations of page `page` (1-based) of a PDF file as markup JSON.
-pub fn pdf_markups(bytes: &[u8], page: usize) -> Result<PdfMarkups> {
-    let damaged = || IoError::Format("the PDF file is damaged or uses a feature the markup reader does not support".into());
-    let head = bytes.get(..bytes.len().min(1024)).unwrap_or_default();
-    let start = find(head, b"%PDF-", 0).ok_or_else(|| IoError::Format("not a PDF file".into()))?;
-    let mut pdf = Pdf::new(bytes.get(start..).ok_or_else(damaged)?);
-    pdf.load_xref().ok_or_else(damaged)?;
-    if pdf.trailer.contains_key("Encrypt") {
-        return Err(IoError::Format("encrypted PDF files are not supported".into()));
-    }
-    if page == 0 {
-        return Err(IoError::Format("pages are numbered from 1".into()));
-    }
-    let (pdict, total) = pdf.find_page(page).ok_or_else(damaged)?;
-    let Some(pdict) = pdict else {
-        return Err(IoError::Format(format!("page {page} does not exist: the file has {total} page(s)")));
-    };
+/// The annotations of page `page` (1-based) of a PDF file as markup JSON. `password` is the user
+/// password of an encrypted file (empty for none).
+pub fn pdf_markups(bytes: &[u8], page: usize, password: &str) -> Result<PdfMarkups> {
+    let (mut pdf, pdict, total) = locate(bytes, page, password)?;
     let pg = pdf.page_geometry(&pdict).ok_or_else(|| IoError::Format("the page has no usable /MediaBox".into()))?;
     let mut markups = Vec::new();
     let mut notes = Vec::new();
@@ -126,6 +124,89 @@ pub fn pdf_markups(bytes: &[u8], page: usize) -> Result<PdfMarkups> {
     notes.sort();
     notes.dedup();
     Ok(PdfMarkups { width: pg.dw, height: pg.dh, page_count: total, markups, notes })
+}
+
+/// One page's drawing instructions and geometry.
+#[derive(Clone, Debug)]
+pub struct PdfPageContent {
+    pub page_count: usize,
+    /// The visible box in default user space: the `/CropBox` inside the `/MediaBox` (the
+    /// `/MediaBox` when there is none): lower left corner and size, in points.
+    pub x0: f64,
+    pub y0: f64,
+    pub w: f64,
+    pub h: f64,
+    /// The page's rotation: 0, 90, 180 or 270 degrees clockwise.
+    pub rotate: i64,
+    /// The page's content streams, decoded and joined by a line feed (a stream with an image
+    /// filter or damaged data is left out).
+    pub content: Vec<u8>,
+}
+
+/// The decoded content of page `page` (1-based); `password` as for [`pdf_markups`].
+pub fn pdf_page_content(bytes: &[u8], page: usize, password: &str) -> Result<PdfPageContent> {
+    let (mut pdf, pdict, page_count) = locate(bytes, page, password)?;
+    let pg = pdf.page_geometry(&pdict).ok_or_else(|| IoError::Format("the page has no usable /MediaBox".into()))?;
+    let parts = match pdf.val(&pdict, "Contents") {
+        Obj::Arr(v) => v.into_iter().take(MAX_ANNOTS).collect(),
+        Obj::Null => Vec::new(),
+        one => vec![one],
+    };
+    let mut content = Vec::new();
+    for p in &parts {
+        if let Obj::Stream(d, a, b, id) = pdf.resolve(p)
+            && let Some(data) = pdf.decode(&d, a, b, id)
+        {
+            if !content.is_empty() {
+                content.push(b'\n');
+            }
+            content.extend(data);
+        }
+    }
+    Ok(PdfPageContent { page_count, x0: pg.x0, y0: pg.y0, w: pg.w, h: pg.h, rotate: pg.rot, content })
+}
+
+/// Opens the file and finds page `page` (with the inherited attributes merged in): through the
+/// xref, else, when that is missing or leads nowhere, through a rebuilt one.
+fn locate<'a>(bytes: &'a [u8], page: usize, password: &str) -> Result<(Pdf<'a>, Dict, usize)> {
+    let damaged = || IoError::Format("the PDF file is damaged or uses a feature the markup reader does not support".into());
+    let head = bytes.get(..bytes.len().min(1024)).unwrap_or_default();
+    let start = find(head, b"%PDF-", 0).ok_or_else(|| IoError::Format("not a PDF file".into()))?;
+    let data = bytes.get(start..).ok_or_else(damaged)?;
+    if page == 0 {
+        return Err(IoError::Format("pages are numbered from 1".into()));
+    }
+    let missing = |total: usize| IoError::Format(format!("page {page} does not exist: the file has {total} page(s)"));
+    let mut pdf = Pdf::new(data);
+    if pdf.load_xref().is_some() && pdf.init_crypt(password)? {
+        match pdf.find_page(page) {
+            Some((Some(d), total)) => return Ok((pdf, d, total)),
+            Some((None, total)) => return Err(missing(total)),
+            None => {}
+        }
+    }
+    let mut pdf = Pdf::new(data);
+    let objstms = pdf.rebuild_xref();
+    if !pdf.init_crypt(password)? {
+        return Err(damaged());
+    }
+    for s in objstms {
+        pdf.load_objstm(s, true);
+    }
+    if !pdf.trailer.contains_key("Root") {
+        // The catalog may sit in an object stream.
+        let cat = pdf
+            .cache
+            .iter()
+            .filter(|(_, o)| matches!(o, Obj::Dict(d) if matches!(d.get("Type"), Some(Obj::Name(t)) if t == "Catalog")))
+            .map(|(n, _)| *n)
+            .min();
+        pdf.trailer.insert("Root".into(), Obj::Ref(cat.ok_or_else(damaged)?));
+    }
+    match pdf.find_page(page).ok_or_else(damaged)? {
+        (Some(d), total) => Ok((pdf, d, total)),
+        (None, total) => Err(missing(total)),
+    }
 }
 
 fn is_ws(b: u8) -> bool {
@@ -342,29 +423,32 @@ impl<'a> Lex<'a> {
             }
             b'0'..=b'9' | b'+' | b'-' | b'.' => self.number(),
             _ => match self.word() {
-                b"true" | b"false" | b"null" => Some(Obj::Null),
+                b"true" => Some(Obj::Bool(true)),
+                b"false" => Some(Obj::Bool(false)),
+                b"null" => Some(Obj::Null),
                 _ => None,
             },
         }
     }
 }
 
-/// The indirect object at byte `off`: its number and value (a stream's data stays in the file).
-fn indirect(data: &[u8], off: usize) -> Option<(u32, Obj)> {
+/// The indirect object at byte `off`: its number, generation and value (a stream's data stays in
+/// the file).
+fn indirect(data: &[u8], off: usize) -> Option<(u32, u16, Obj)> {
     let mut l = Lex { d: data, p: off };
     l.skip_ws();
     let n = u32::try_from(l.uint()?).ok()?;
     l.skip_ws();
-    l.uint()?;
+    let g = u16::try_from(l.uint()?).unwrap_or(0);
     l.skip_ws();
     if l.word() != b"obj" {
         return None;
     }
     let o = l.obj(0)?;
-    let Obj::Dict(d) = o else { return Some((n, o)) };
+    let Obj::Dict(d) = o else { return Some((n, g, o)) };
     l.skip_ws();
     if !l.starts(b"stream") {
-        return Some((n, Obj::Dict(d)));
+        return Some((n, g, Obj::Dict(d)));
     }
     l.p += 6;
     if l.starts(b"\r\n") {
@@ -395,7 +479,7 @@ fn indirect(data: &[u8], off: usize) -> Option<(u32, Obj)> {
             }
             Some(e2)
         })?;
-    Some((n, Obj::Stream(d, start, end)))
+    Some((n, g, Obj::Stream(d, start, end, (n, g))))
 }
 
 #[derive(Clone, Copy)]
@@ -414,6 +498,7 @@ struct Pdf<'a> {
     objstms: HashSet<u32>,
     loads: usize,
     inflated: usize,
+    crypt: Option<Crypt>,
 }
 
 /// A page's media box and rotation, with the transform to normalized displayed coordinates.
@@ -461,18 +546,48 @@ fn shape(kind: &str, pts: &[[f64; 2]], color: Option<&str>) -> Value {
     v
 }
 
-/// PDF text string: UTF-16BE or UTF-8 with a byte order mark, else Latin-1 (PDFDocEncoding's
-/// printable range).
+/// PDFDocEncoding's differences from Latin-1: 0x18-0x1F, then 0x80-0xA0 (0x9F is undefined).
+const PDFDOC_18: [char; 8] = ['˘', 'ˇ', 'ˆ', '˙', '˝', '˛', '˚', '˜'];
+const PDFDOC_80: [char; 33] = [
+    '•', '†', '‡', '…', '—', '–', 'ƒ', '⁄', '‹', '›', '−', '‰', '„', '“', '”', '‘', '’', '‚', '™', 'ﬁ', 'ﬂ', 'Ł', 'Œ', 'Š', 'Ÿ', 'Ž', 'ı', 'ł', 'œ',
+    'š', 'ž', '\u{FFFD}', '€',
+];
+
+fn pdfdoc(b: u8) -> char {
+    let pick = |t: &[char], from: u8| t.get(usize::from(b - from)).copied().unwrap_or('\u{FFFD}');
+    match b {
+        0x18..=0x1F => pick(&PDFDOC_18, 0x18),
+        0x80..=0xA0 => pick(&PDFDOC_80, 0x80),
+        _ => char::from(b),
+    }
+}
+
+/// PDF text string: UTF-16BE or UTF-8 with a byte order mark (language escapes dropped), else
+/// PDFDocEncoding.
 fn pdf_text(b: &[u8]) -> String {
     let s = if let Some(r) = b.strip_prefix(&[0xFE, 0xFF]) {
         let u: Vec<u16> = r.as_chunks::<2>().0.iter().map(|c| u16::from_be_bytes(*c)).collect();
-        String::from_utf16_lossy(&u)
+        drop_language(&String::from_utf16_lossy(&u))
     } else if let Some(r) = b.strip_prefix(&[0xEF, 0xBB, 0xBF]) {
-        String::from_utf8_lossy(r).into_owned()
+        drop_language(&String::from_utf8_lossy(r))
     } else {
-        b.iter().map(|c| *c as char).collect()
+        b.iter().map(|c| pdfdoc(*c)).collect()
     };
     s.replace("\r\n", "\n").replace('\r', "\n")
+}
+
+/// Text between a pair of U+001B is a language tag, not text.
+fn drop_language(s: &str) -> String {
+    let mut tag = false;
+    s.chars()
+        .filter(|c| {
+            if *c == '\u{1b}' {
+                tag = !tag;
+                return false;
+            }
+            !tag
+        })
+        .collect()
 }
 
 /// The font size of a default appearance string (`/Helv 12 Tf`).
@@ -499,7 +614,7 @@ fn hex_color(c: &[f64]) -> Option<String> {
 
 impl<'a> Pdf<'a> {
     fn new(data: &'a [u8]) -> Self {
-        Pdf { data, xref: HashMap::new(), trailer: Dict::new(), cache: HashMap::new(), objstms: HashSet::new(), loads: 0, inflated: 0 }
+        Pdf { data, xref: HashMap::new(), trailer: Dict::new(), cache: HashMap::new(), objstms: HashSet::new(), loads: 0, inflated: 0, crypt: None }
     }
 
     // ---- file structure ----
@@ -572,8 +687,8 @@ impl<'a> Pdf<'a> {
                 _ => None,
             };
         }
-        let (_, Obj::Stream(d, a, b)) = indirect(self.data, off)? else { return None };
-        let data = self.decode(&d, a, b)?;
+        let (_, _, Obj::Stream(d, a, b, id)) = indirect(self.data, off)? else { return None };
+        let data = self.decode(&d, a, b, id)?;
         let ints = |me: &mut Self, k: &str| -> Option<Vec<usize>> {
             let Obj::Arr(v) = me.val(&d, k) else { return None };
             v.iter()
@@ -624,29 +739,34 @@ impl<'a> Pdf<'a> {
         }
         match *self.xref.get(&n)? {
             Entry::At(off) => {
-                let (m, o) = indirect(self.data, off)?;
+                let (m, g, mut o) = indirect(self.data, off)?;
                 if m != n {
                     return None;
+                }
+                if let Some(c) = &self.crypt {
+                    c.strings(&mut o, (n, g));
                 }
                 self.cache.insert(n, o.clone());
                 Some(o)
             }
             Entry::In(s) => {
-                self.load_objstm(s)?;
+                self.load_objstm(s, false)?;
                 self.cache.get(&n).cloned()
             }
             Entry::Free => None,
         }
     }
 
-    fn load_objstm(&mut self, s: u32) -> Option<()> {
+    /// Reads the members of object stream `s` into the cache: those the xref places in it, and,
+    /// when `register` (a rebuilt xref), those it does not know yet.
+    fn load_objstm(&mut self, s: u32, register: bool) -> Option<()> {
         if !self.objstms.insert(s) {
             return Some(());
         }
-        let Obj::Stream(d, a, b) = self.get(s)? else { return None };
+        let Obj::Stream(d, a, b, id) = self.get(s)? else { return None };
         let count = self.num_of(&d, "N")? as usize;
         let first = self.num_of(&d, "First")? as usize;
-        let data = self.decode(&d, a, b)?;
+        let data = self.decode(&d, a, b, id)?;
         let mut head = Lex { d: &data, p: 0 };
         for _ in 0..count.min(MAX_LOADS) {
             head.skip_ws();
@@ -657,6 +777,9 @@ impl<'a> Pdf<'a> {
             if self.loads > MAX_LOADS {
                 return None;
             }
+            if register && !self.xref.contains_key(&num) {
+                self.xref.insert(num, Entry::In(s));
+            }
             if matches!(self.xref.get(&num), Some(Entry::In(x)) if *x == s)
                 && !self.cache.contains_key(&num)
                 && let Some(o) = (Lex { d: &data, p: off }).obj(0)
@@ -665,6 +788,77 @@ impl<'a> Pdf<'a> {
             }
         }
         Some(())
+    }
+
+    /// Rebuilds the cross-reference of a file whose own is missing or wrong: every `N G obj` in
+    /// the file (a later one replaces an earlier), the trailer entries of every `trailer` and
+    /// xref stream (the last one wins), else the catalog. Returns the object streams found; the
+    /// caller reads their members once decryption is set up.
+    fn rebuild_xref(&mut self) -> Vec<u32> {
+        let d = self.data;
+        // The start of the run of bytes before `j` that satisfy `f`.
+        let back = |mut j: usize, f: fn(&u8) -> bool| {
+            while j > 0 && d.get(j - 1).is_some_and(f) {
+                j -= 1;
+            }
+            j
+        };
+        let (mut at, mut found) = (0usize, Vec::new());
+        while let Some(i) = find(d, b"obj", at) {
+            at = i + 3;
+            if found.len() >= MAX_LOADS || d.get(at).is_some_and(|b| !is_ws(*b) && !is_delim(*b)) {
+                continue;
+            }
+            let g_end = back(i, |b| is_ws(*b));
+            let g_start = back(g_end, u8::is_ascii_digit);
+            let n_end = back(g_start, |b| is_ws(*b));
+            let n_start = back(n_end, u8::is_ascii_digit);
+            if g_end == i || g_start == g_end || n_end == g_start || n_start == n_end {
+                continue;
+            }
+            if let Some(num) = d.get(n_start..n_end).and_then(|t| std::str::from_utf8(t).ok()?.parse::<u32>().ok()) {
+                self.xref.insert(num, Entry::At(n_start));
+                found.push((n_start, num));
+            }
+        }
+        // Trailer dictionaries, newest (highest offset) first.
+        let mut cands: Vec<(usize, Dict)> = Vec::new();
+        let (mut t, mut objstms, mut catalog) = (0usize, Vec::new(), None);
+        while let Some(i) = find(d, b"trailer", t) {
+            t = i + 7;
+            if cands.len() >= MAX_XREF_SECTIONS {
+                break;
+            }
+            if let Some(Obj::Dict(td)) = (Lex { d, p: t }).obj(0) {
+                cands.push((i, td));
+            }
+        }
+        for &(off, num) in &found {
+            let w = d.get(off..d.len().min(off + 200)).unwrap_or_default();
+            if find(w, b"/ObjStm", 0).is_some() {
+                objstms.push(num);
+            } else if find(w, b"/XRef", 0).is_some() {
+                if let Some((_, _, Obj::Stream(sd, ..))) = indirect(d, off)
+                    && cands.len() < 2 * MAX_XREF_SECTIONS
+                {
+                    cands.push((off, sd));
+                }
+            } else if find(w, b"/Catalog", 0).is_some() {
+                catalog = Some(num);
+            }
+        }
+        cands.sort_by_key(|c| std::cmp::Reverse(c.0));
+        for (_, td) in cands {
+            for (k, v) in td {
+                self.trailer.entry(k).or_insert(v);
+            }
+        }
+        if !self.trailer.contains_key("Root")
+            && let Some(c) = catalog
+        {
+            self.trailer.insert("Root".into(), Obj::Ref(c));
+        }
+        objstms
     }
 
     /// Follows references (a bounded number of hops); an unreadable one is `Null`.
@@ -717,85 +911,55 @@ impl<'a> Pdf<'a> {
 
     // ---- streams ----
 
-    fn decode(&mut self, d: &Dict, a: usize, b: usize) -> Option<Vec<u8>> {
+    /// A stream's data: decrypted, then through its filters (`None` for a filter that is not
+    /// read, such as an image filter, or for damaged data).
+    fn decode(&mut self, d: &Dict, a: usize, b: usize, id: (u32, u16)) -> Option<Vec<u8>> {
         let mut cur = self.data.get(a..b)?.to_vec();
-        let names = |me: &mut Self, k: &str| -> Vec<Obj> {
+        let list = |me: &mut Self, k: &str| -> Vec<Obj> {
             match me.val(d, k) {
                 Obj::Null => Vec::new(),
                 Obj::Arr(v) => v.iter().map(|o| me.resolve(o)).collect(),
                 o => vec![o],
             }
         };
-        let (filters, parms) = (names(self, "Filter"), names(self, "DecodeParms"));
+        let (filters, parms) = (list(self, "Filter"), list(self, "DecodeParms"));
+        // The xref stream is never encrypted.
+        if !matches!(d.get("Type"), Some(Obj::Name(t)) if t == "XRef")
+            && let Some(c) = &self.crypt
+        {
+            cur = c.open(c.stream_method(&filters, &parms), id, &cur);
+        }
         for (i, f) in filters.iter().enumerate() {
             let Obj::Name(n) = f else { return None };
-            if n != "FlateDecode" && n != "Fl" {
-                return None;
-            }
-            cur = miniz_oxide::inflate::decompress_to_vec_zlib_with_limit(&cur, MAX_INFLATE).ok()?;
+            let p = match parms.get(i) {
+                Some(Obj::Dict(p)) => Some(p.clone()),
+                _ => None,
+            };
+            let int = |me: &mut Self, k: &str, def: usize| {
+                p.as_ref().and_then(|p| me.num_of(p, k)).filter(|n| *n >= 0.0 && *n < 1e9).map_or(def, |n| n as usize)
+            };
+            let predicted = matches!(n.as_str(), "FlateDecode" | "Fl" | "LZWDecode" | "LZW");
+            cur = match n.as_str() {
+                "FlateDecode" | "Fl" => miniz_oxide::inflate::decompress_to_vec_zlib_with_limit(&cur, MAX_INFLATE).ok()?,
+                "LZWDecode" | "LZW" => filters::lzw(&cur, int(self, "EarlyChange", 1) != 0, MAX_INFLATE)?,
+                "ASCIIHexDecode" | "AHx" => filters::ascii_hex(&cur),
+                "ASCII85Decode" | "A85" => filters::ascii85(&cur)?,
+                "RunLengthDecode" | "RL" => filters::run_length(&cur, MAX_INFLATE)?,
+                // Handled above (the decryption).
+                "Crypt" => cur,
+                _ => return None,
+            };
             self.inflated = self.inflated.checked_add(cur.len())?;
-            if self.inflated > MAX_INFLATE_TOTAL {
+            if cur.len() > MAX_INFLATE || self.inflated > MAX_INFLATE_TOTAL {
                 return None;
             }
-            if let Some(Obj::Dict(p)) = parms.get(i) {
-                cur = self.predict(p, cur)?;
+            if predicted && p.is_some() {
+                let (pred, colors) = (int(self, "Predictor", 1), int(self, "Colors", 1));
+                let (bpc, cols) = (int(self, "BitsPerComponent", 8), int(self, "Columns", 1));
+                cur = filters::predict(cur, pred, colors, bpc, cols, MAX_INFLATE)?;
             }
         }
         Some(cur)
-    }
-
-    /// Undo a PNG predictor (TIFF predictor 2 is not supported).
-    fn predict(&mut self, p: &Dict, data: Vec<u8>) -> Option<Vec<u8>> {
-        let int = |me: &mut Self, k: &str, def: usize| me.num_of(p, k).filter(|n| *n >= 0.0 && *n < 1e9).map_or(def, |n| n as usize);
-        let pred = int(self, "Predictor", 1);
-        if pred < 2 {
-            return Some(data);
-        }
-        if pred < 10 {
-            return None;
-        }
-        let (colors, bpc, cols) = (int(self, "Colors", 1), int(self, "BitsPerComponent", 8), int(self, "Columns", 1));
-        let bits = colors.checked_mul(bpc)?;
-        let bpp = bits.div_ceil(8).max(1);
-        let rowlen = bits.checked_mul(cols)?.div_ceil(8);
-        if rowlen == 0 || rowlen > MAX_INFLATE {
-            return None;
-        }
-        let mut out: Vec<u8> = Vec::with_capacity(data.len());
-        let mut prev = vec![0u8; rowlen];
-        for chunk in data.chunks(rowlen + 1) {
-            let ft = chunk.first().copied().unwrap_or(0);
-            let mut row = Vec::with_capacity(rowlen);
-            for i in 0..rowlen {
-                let x = chunk.get(i + 1).copied().unwrap_or(0);
-                let left = i.checked_sub(bpp).and_then(|j| row.get(j)).copied().unwrap_or(0);
-                let up = prev.get(i).copied().unwrap_or(0);
-                let ul = i.checked_sub(bpp).and_then(|j| prev.get(j)).copied().unwrap_or(0);
-                let v = match ft {
-                    0 => x,
-                    1 => x.wrapping_add(left),
-                    2 => x.wrapping_add(up),
-                    3 => x.wrapping_add(((u16::from(left) + u16::from(up)) / 2) as u8),
-                    4 => {
-                        let (a, b, c) = (i16::from(left), i16::from(up), i16::from(ul));
-                        let pp = a + b - c;
-                        let (pa, pb, pc) = ((pp - a).abs(), (pp - b).abs(), (pp - c).abs());
-                        x.wrapping_add(if pa <= pb && pa <= pc {
-                            left
-                        } else if pb <= pc {
-                            up
-                        } else {
-                            ul
-                        })
-                    }
-                    _ => return None,
-                };
-                row.push(v);
-            }
-            out.extend_from_slice(&row);
-            prev = row;
-        }
-        Some(out)
     }
 
     // ---- pages ----
@@ -819,7 +983,7 @@ impl<'a> Pdf<'a> {
             }
             let Obj::Dict(mut d) = self.resolve(&node) else { continue };
             let mut inh = inherited;
-            for k in ["MediaBox", "Rotate"] {
+            for k in ["MediaBox", "CropBox", "Rotate"] {
                 if let Some(v) = d.get(k) {
                     inh.insert(k.into(), v.clone());
                 }
@@ -841,13 +1005,25 @@ impl<'a> Pdf<'a> {
         Some((None, idx))
     }
 
-    fn page_geometry(&mut self, p: &Dict) -> Option<Page> {
-        let b = self.nums_of(p, "MediaBox")?;
+    /// A rectangle array as `[x0, y0, x1, y1]`, ordered.
+    fn rect_of(&mut self, p: &Dict, k: &str) -> Option<[f64; 4]> {
+        let b = self.nums_of(p, k)?;
         let [a, b, c, d] = b.as_slice() else { return None };
-        let (x0, y0, w, h) = (a.min(*c), b.min(*d), (c - a).abs(), (d - b).abs());
-        if !(w.is_finite() && h.is_finite() && w >= 1e-6 && h >= 1e-6 && w < 1e9 && h < 1e9) {
+        Some([a.min(*c), b.min(*d), a.max(*c), b.max(*d)])
+    }
+
+    /// The visible box: `/CropBox` inside `/MediaBox` (the media box when the crop box is missing
+    /// or does not overlap it).
+    fn page_geometry(&mut self, p: &Dict) -> Option<Page> {
+        let m = self.rect_of(p, "MediaBox")?;
+        let usable =
+            |r: &[f64; 4]| r.iter().all(|v| v.is_finite()) && r[2] - r[0] >= 1e-6 && r[3] - r[1] >= 1e-6 && r[2] - r[0] < 1e9 && r[3] - r[1] < 1e9;
+        let crop = self.rect_of(p, "CropBox").map(|c| [c[0].max(m[0]), c[1].max(m[1]), c[2].min(m[2]), c[3].min(m[3])]).filter(usable);
+        let r = crop.unwrap_or(m);
+        if !usable(&r) {
             return None;
         }
+        let (x0, y0, w, h) = (r[0], r[1], r[2] - r[0], r[3] - r[1]);
         let rot = (self.num_of(p, "Rotate").unwrap_or(0.0) as i64).rem_euclid(360);
         let (dw, dh) = if rot == 90 || rot == 270 { (h, w) } else { (w, h) };
         Some(Page { x0, y0, w, h, rot, dw, dh })
@@ -857,6 +1033,24 @@ impl<'a> Pdf<'a> {
 
     fn color(&mut self, a: &Dict) -> Option<String> {
         hex_color(&self.nums_of(a, "C")?)
+    }
+
+    /// The comment of an annotation: `/Contents`, unless the rich text `/RC` (what a viewer
+    /// shows) says something else once its markup is stripped and white space collapsed.
+    fn annot_text(&mut self, a: &Dict) -> String {
+        let contents = pdf_text(&self.string(a, "Contents"));
+        let rc = match self.val(a, "RC") {
+            Obj::Str(s) => pdf_text(&s),
+            Obj::Stream(d, x, y, id) => match self.decode(&d, x, y, id) {
+                Some(b) if b.starts_with(&[0xFE, 0xFF]) || b.starts_with(&[0xEF, 0xBB, 0xBF]) => pdf_text(&b),
+                Some(b) => String::from_utf8_lossy(&b).into_owned(),
+                None => String::new(),
+            },
+            _ => String::new(),
+        };
+        let rc = rich::plain(&rc);
+        let norm = |s: &str| s.split_whitespace().collect::<Vec<_>>().join(" ");
+        if rc.is_empty() || norm(&rc) == norm(&contents) { contents } else { rc }
     }
 
     /// `/Rect` as `[x0, y0, x1, y1]`, ordered.
@@ -897,7 +1091,7 @@ impl<'a> Pdf<'a> {
         }
         let color = self.color(a);
         let c = color.as_deref();
-        let text = pdf_text(&self.string(a, "Contents"));
+        let text = self.annot_text(a);
         let note_h = NOTE_PT / pg.dh;
         let comment = |pts: &[[f64; 2]], out: &mut Vec<Value>| {
             if !text.is_empty() {

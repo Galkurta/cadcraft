@@ -4,7 +4,7 @@ use cadcraft_color::Rgb;
 use cadcraft_geom::{Bounds2, Vec2};
 use tiny_skia::{FillRule, LineCap, LineJoin, Paint, PathBuilder, Pixmap, Stroke, Transform};
 
-use crate::{DisplayList, Kind};
+use crate::{DisplayList, ImageDraw, Kind};
 
 /// A 2D view: world point at the image centre and pixels per drawing unit.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -136,6 +136,11 @@ pub fn render(list: &DisplayList, view: &View, o: &RasterOptions) -> Option<Pixm
                     }
                 }
             }
+            Kind::Image(ix) => {
+                if let Some(img) = list.images.get(ix as usize) {
+                    draw_image(&mut pm, view, img, p.alpha(), o.background);
+                }
+            }
             Kind::Infinite { ray } => {
                 let (Some(base), Some(dir)) = (pts.first(), pts.get(1)) else { continue };
                 let far = (vis.width() + vis.height()) * 2.0 + base.dist(vis.center());
@@ -158,4 +163,70 @@ pub fn render(list: &DisplayList, view: &View, o: &RasterOptions) -> Option<Pixm
 /// Render and encode as PNG.
 pub fn render_png(list: &DisplayList, view: &View, o: &RasterOptions) -> Option<Vec<u8>> {
     render(list, view, o)?.encode_png().ok()
+}
+
+/// Draw a picture: its pixels (a PDF page at about the resolution it shows at), faded towards
+/// the background, `alpha` opaque, inside its clip polygons. A picture that can't be read is
+/// left out (its frame is drawn as polylines).
+fn draw_image(pm: &mut Pixmap, view: &View, img: &ImageDraw, alpha: u8, bg: Rgb) {
+    use tiny_skia::{FilterQuality, Mask, PixmapPaint};
+    if img.missing || alpha == 0 {
+        return;
+    }
+    let want = (img.longest() * view.scale).clamp(1.0, 1e5) as u32;
+    let Ok(raster) = crate::images::load(&img.path, img.page, want) else { return };
+    let (w, h) = (f64::from(raster.width), f64::from(raster.height));
+    let screen = |x: f64, y: f64| view.to_screen(img.world(x, y, w, h));
+    let ((x0, y0), (x1, y1), (x2, y2)) = (screen(0.0, 0.0), screen(w, 0.0), screen(0.0, h));
+    let corners = [(x0, y0), (x1, y1), (x1 + x2 - x0, y1 + y2 - y0), (x2, y2)];
+    let fits = |f: fn(&(f32, f32)) -> f32, lo: f32, hi: f32| {
+        let (min, max) = corners.iter().fold((f32::MAX, f32::MIN), |(a, b), c| (a.min(f(c)), b.max(f(c))));
+        max >= lo && min <= hi
+    };
+    if !(x0.is_finite() && y0.is_finite() && x1.is_finite() && y1.is_finite() && x2.is_finite() && y2.is_finite())
+        || !fits(|c| c.0, 0.0, view.width as f32)
+        || !fits(|c| c.1, 0.0, view.height as f32)
+    {
+        return;
+    }
+    let faded;
+    let raster = if img.fade > 0 {
+        faded = crate::images::faded(&raster, img.fade, bg);
+        &faded
+    } else {
+        &*raster
+    };
+    // tiny-skia pixmaps are premultiplied.
+    let mut data = raster.rgba.clone();
+    for [r, g, b, a] in data.as_chunks_mut::<4>().0 {
+        let a = u32::from(*a);
+        *r = ((u32::from(*r) * a + 127) / 255) as u8;
+        *g = ((u32::from(*g) * a + 127) / 255) as u8;
+        *b = ((u32::from(*b) * a + 127) / 255) as u8;
+    }
+    let Some(size) = tiny_skia::IntSize::from_wh(raster.width, raster.height) else { return };
+    let Some(src) = Pixmap::from_vec(data, size) else { return };
+    let mut mask: Option<Mask> = None;
+    for poly in &img.clips {
+        let mut pb = PathBuilder::new();
+        for (i, q) in poly.iter().enumerate() {
+            let (x, y) = view.to_screen(*q);
+            if i == 0 { pb.move_to(x, y) } else { pb.line_to(x, y) }
+        }
+        pb.close();
+        let Some(path) = pb.finish() else { return };
+        match &mut mask {
+            None => {
+                let Some(mut m) = Mask::new(view.width, view.height) else { return };
+                m.fill_path(&path, FillRule::Winding, true, Transform::identity());
+                mask = Some(m);
+            }
+            Some(m) => m.intersect_path(&path, FillRule::Winding, true, Transform::identity()),
+        }
+    }
+    let t = Transform::from_row((x1 - x0) / w as f32, (y1 - y0) / w as f32, (x2 - x0) / h as f32, (y2 - y0) / h as f32, x0, y0);
+    // Magnified pictures keep their pixels; reduced ones are smoothed.
+    let quality = if (x1 - x0).hypot(y1 - y0) > 2.0 * w as f32 { FilterQuality::Nearest } else { FilterQuality::Bilinear };
+    let paint = PixmapPaint { opacity: f32::from(alpha) / 255.0, quality, ..PixmapPaint::default() };
+    pm.draw_pixmap(0, 0, src.as_ref(), &paint, t, mask.as_ref());
 }

@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 use cadcraft_engine::Session;
 use serde_json::{Value, json};
 
-use crate::{Agent, AiError, Backend, Config, Event, call_tool_with, recognize_image_markups};
+use crate::{Agent, AiError, Backend, Config, Event, Image, Message, Vision, call_tool_with, recognize_image_markups};
 
 /// An engine session answering the few control methods these tests use.
 struct Sess(Session);
@@ -33,14 +33,24 @@ impl Backend for Sess {
     }
 }
 
-/// Serves one canned reply (status, body) per connection, in order; returns the raw requests.
+/// Serves one canned reply (status, JSON body) per connection, in order; returns the raw requests.
 fn serve(replies: Vec<(u16, Vec<u8>)>) -> (Config, JoinHandle<Vec<String>>) {
+    serve_chunks(replies.into_iter().map(|(s, b)| (s, "application/json", vec![b])).collect())
+}
+
+/// Like [`serve`], with a content type and a body sent in pieces with pauses between (an SSE stream).
+fn serve_chunks(replies: Vec<(u16, &'static str, Vec<Vec<u8>>)>) -> (Config, JoinHandle<Vec<String>>) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     listener.set_nonblocking(true).unwrap();
-    let cfg = Config { base_url: format!("http://{}/v1", listener.local_addr().unwrap()), model: "test-model".into(), api_key: "sekret".into() };
+    let cfg = Config {
+        base_url: format!("http://{}/v1", listener.local_addr().unwrap()),
+        model: "test-model".into(),
+        api_key: "sekret".into(),
+        vision: Vision::Auto,
+    };
     let h = std::thread::spawn(move || {
         let mut requests = Vec::new();
-        for (status, body) in replies {
+        for (status, ctype, chunks) in replies {
             let deadline = Instant::now() + Duration::from_secs(20);
             let mut conn = loop {
                 match listener.accept() {
@@ -76,10 +86,20 @@ fn serve(replies: Vec<(u16, Vec<u8>)>) -> (Config, JoinHandle<Vec<String>>) {
                 raw.extend_from_slice(&buf[..n]);
             }
             requests.push(String::from_utf8_lossy(&raw).to_string());
-            let head =
-                format!("HTTP/1.1 {status} X\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len());
-            let _ = conn.write_all(head.as_bytes());
-            let _ = conn.write_all(&body);
+            let _ = if ctype == "text/event-stream" {
+                // No Content-Length: the stream ends when the connection closes.
+                conn.write_all(format!("HTTP/1.1 {status} X\r\nContent-Type: {ctype}\r\nConnection: close\r\n\r\n").as_bytes())
+            } else {
+                let len: usize = chunks.iter().map(Vec::len).sum();
+                conn.write_all(
+                    format!("HTTP/1.1 {status} X\r\nContent-Type: {ctype}\r\nContent-Length: {len}\r\nConnection: close\r\n\r\n").as_bytes(),
+                )
+            };
+            for chunk in chunks {
+                let _ = conn.write_all(&chunk);
+                let _ = conn.flush();
+                std::thread::sleep(Duration::from_millis(15));
+            }
         }
         requests
     });
@@ -159,7 +179,7 @@ fn garbage_oversized_and_failing_endpoints_are_errors_not_panics() {
         server.join().unwrap();
     }
     // Nothing listens there.
-    let cfg = Config { base_url: "http://127.0.0.1:1/v1".into(), model: "m".into(), api_key: String::new() };
+    let cfg = Config { base_url: "http://127.0.0.1:1/v1".into(), model: "m".into(), ..Config::default() };
     let events = Agent::new(cfg).send(&mut Sess(Session::new()), "go", &AtomicBool::new(false), &mut |_| {});
     assert!(matches!(events.as_slice(), [Event::Error(_)]), "{events:?}");
 }
@@ -197,7 +217,7 @@ impl Backend for Recorder {
 fn markup_import_sends_a_pdf_straight_on_and_reads_an_image_first() {
     let dir = std::env::temp_dir().join(format!("cadcraft-ai-test-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
-    let cfg = Config { base_url: "http://127.0.0.1:1/v1".into(), model: "m".into(), api_key: String::new() };
+    let cfg = Config { base_url: "http://127.0.0.1:1/v1".into(), model: "m".into(), ..Config::default() };
     let mut rec = Recorder(Vec::new());
     let pdf = dir.join("review.pdf").to_string_lossy().to_string();
     let r = call_tool_with(&mut rec, &cfg, "markup_import", &json!({"path": pdf, "page": 2, "at": [0, 0]})).unwrap();
@@ -222,4 +242,163 @@ fn markup_import_sends_a_pdf_straight_on_and_reads_an_image_first() {
     assert_eq!(r["isError"], true);
     assert_eq!(rec.0.len(), n);
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+fn sse(deltas: &[Value]) -> Vec<u8> {
+    deltas
+        .iter()
+        .map(|d| format!("data: {}\n\n", json!({"choices": [{"delta": d}]})))
+        .chain(["data: [DONE]\n\n".to_string()])
+        .collect::<String>()
+        .into_bytes()
+}
+
+fn text_of(events: &[Event]) -> String {
+    events.iter().filter_map(|e| if let Event::Text(t) = e { Some(t.as_str()) } else { None }).collect()
+}
+
+/// An agent that has already been shown a picture.
+fn agent_with_picture(cfg: Config) -> Agent {
+    let mut agent = Agent::new(cfg);
+    agent.messages.push(Message::User { text: "look".into(), images: vec![Image { mime: "image/png".into(), base64: "QUJD".into() }] });
+    agent
+}
+
+fn run(agent: &mut Agent, backend: &mut Sess) -> Vec<Event> {
+    agent.send(backend, "go", &AtomicBool::new(false), &mut |_| {})
+}
+
+#[test]
+fn a_streamed_answer_with_a_split_tool_call_draws_the_circle() {
+    let first = sse(&[
+        json!({"role": "assistant", "content": "Dra"}),
+        json!({"content": "wing."}),
+        json!({"tool_calls": [{"index": 0, "id": "c1", "type": "function", "function": {"name": "command_line", "arguments": ""}}]}),
+        json!({"tool_calls": [{"index": 0, "function": {"arguments": "{\"text\":\"cir"}}]}),
+        json!({"tool_calls": [{"index": 0, "function": {"arguments": "cle 0,0 5\"}"}}]}),
+    ]);
+    // The bytes arrive in pieces that cut lines in half.
+    let cut = |b: &[u8]| b.chunks(37).map(<[u8]>::to_vec).collect::<Vec<_>>();
+    let second = sse(&[json!({"content": "Done"}), json!({"content": "!"})]);
+    let (cfg, server) = serve_chunks(vec![(200, "text/event-stream", cut(&first)), (200, "text/event-stream", cut(&second))]);
+    let mut backend = Sess(Session::new());
+    let events = run(&mut Agent::new(cfg), &mut backend);
+    assert_eq!(text_of(&events), "Drawing.Done!", "{events:?}");
+    assert!(matches!(&events[0], Event::Text(t) if t == "Dra"), "text shows while it arrives: {events:?}");
+    assert!(events.iter().any(|e| matches!(e, Event::ToolResult { error: false, .. })), "{events:?}");
+    assert_eq!(backend.0.execute("entities", &json!({"type": "Circle"})).unwrap()["count"], 1);
+    let requests = server.join().unwrap();
+    assert!(requests[0].contains(r#""stream":true"#), "{}", requests[0]);
+    assert!(requests[1].contains(r#""tool_call_id":"c1""#));
+}
+
+#[test]
+fn a_400_about_images_retries_once_without_them_and_the_session_remembers() {
+    let err = || (400, br#"{"error":{"message":"image input is not supported by this model"}}"#.to_vec());
+    let (cfg, server) = serve(vec![err(), reply(json!({"content": "No picture seen."})), reply(json!({"content": "Still text only."}))]);
+    let mut agent = agent_with_picture(cfg);
+    let mut backend = Sess(Session::new());
+    let events = run(&mut agent, &mut backend);
+    assert!(matches!(&events[0], Event::Note(_)), "{events:?}");
+    assert_eq!(text_of(&events), "No picture seen.");
+    assert!(!events.iter().any(|e| matches!(e, Event::Error(_))), "{events:?}");
+    assert!(agent.no_vision);
+    // The next picture is not even tried.
+    agent.messages.push(Message::User { text: "again".into(), images: vec![Image { mime: "image/png".into(), base64: "REVG".into() }] });
+    assert_eq!(text_of(&run(&mut agent, &mut backend)), "Still text only.");
+    let requests = server.join().unwrap();
+    assert_eq!(requests.len(), 3);
+    assert!(requests[0].contains("image_url"));
+    assert!(!requests[1].contains("image_url") && requests[1].contains("left out"), "{}", requests[1]);
+    assert!(!requests[2].contains("image_url") && !requests[2].contains("REVG"));
+}
+
+#[test]
+fn only_auto_retries_and_only_for_image_errors() {
+    // An unrelated 400 is the error it is, with one request.
+    let (cfg, server) = serve(vec![(400, br#"{"error":{"message":"unknown model"}}"#.to_vec())]);
+    let events = run(&mut agent_with_picture(cfg), &mut Sess(Session::new()));
+    assert!(matches!(events.as_slice(), [Event::Error(m)] if m.contains("unknown model")), "{events:?}");
+    assert_eq!(server.join().unwrap().len(), 1);
+    // Vision On insists: the refusal is the error.
+    let (mut cfg, server) = serve(vec![(400, br#"{"error":{"message":"no multimodal input"}}"#.to_vec())]);
+    cfg.vision = Vision::On;
+    let events = run(&mut agent_with_picture(cfg), &mut Sess(Session::new()));
+    assert!(matches!(events.as_slice(), [Event::Error(_)]), "{events:?}");
+    assert_eq!(server.join().unwrap().len(), 1);
+    // A refusal that stays a refusal after the retry ends the turn (one retry only).
+    let img = || (400, br#"{"error":"bad image"}"#.to_vec());
+    let (cfg, server) = serve(vec![img(), img()]);
+    let events = run(&mut agent_with_picture(cfg), &mut Sess(Session::new()));
+    assert!(matches!(events.last(), Some(Event::Error(_))), "{events:?}");
+    assert_eq!(server.join().unwrap().len(), 2);
+}
+
+#[test]
+fn vision_off_sends_no_image_parts() {
+    let (mut cfg, server) = serve(vec![reply(json!({"content": "ok"}))]);
+    cfg.vision = Vision::Off;
+    let events = run(&mut agent_with_picture(cfg), &mut Sess(Session::new()));
+    assert_eq!(text_of(&events), "ok");
+    let req = &server.join().unwrap()[0];
+    assert!(!req.contains("image_url") && !req.contains("QUJD") && req.contains("left out"), "{req}");
+    // Image recognition has nothing to work with.
+    let cfg = Config { vision: Vision::Off, ..Config::default() };
+    assert!(matches!(recognize_image_markups(&cfg, b"x", "image/png"), Err(AiError::Config(m)) if m.contains("vision")));
+}
+
+#[test]
+fn a_server_that_rejects_streaming_is_asked_again_without_it() {
+    let (cfg, server) = serve(vec![(400, br#"{"error":{"message":"streaming is not supported"}}"#.to_vec()), reply(json!({"content": "whole"}))]);
+    let mut agent = Agent::new(cfg);
+    let events = run(&mut agent, &mut Sess(Session::new()));
+    assert_eq!(text_of(&events), "whole");
+    assert!(agent.no_stream);
+    let requests = server.join().unwrap();
+    assert!(requests[0].contains(r#""stream":true"#) && !requests[1].contains(r#""stream""#), "{requests:?}");
+}
+
+#[test]
+fn garbage_and_oversized_streams_are_errors_not_panics() {
+    let line = format!("data: {{\"choices\":[{{\"delta\":{{\"content\":\"{}\"}}}}]}}\n", "x".repeat(1000));
+    let huge = line.repeat(9 << 10).into_bytes();
+    let cases: Vec<Vec<u8>> = vec![
+        b"data: not json\n\n".to_vec(),
+        b": only a comment\n\n".to_vec(),
+        b"data: [DONE]\n\n".to_vec(),
+        b"data: {\"error\":{\"message\":\"overloaded\"}}\n\n".to_vec(),
+        vec![b'd'; 2 << 20],
+        vec![0xff, 0xfe, b'\n'],
+        huge,
+    ];
+    for body in cases {
+        let (cfg, server) = serve_chunks(vec![(200, "text/event-stream", vec![body])]);
+        let events = run(&mut Agent::new(cfg), &mut Sess(Session::new()));
+        assert!(matches!(events.last(), Some(Event::Error(_))), "{events:?}");
+        server.join().unwrap();
+    }
+}
+
+#[test]
+fn a_driver_polls_without_blocking_and_stops_on_cancel() {
+    use std::sync::Arc;
+    // The first line, then comments for a few seconds: the reply stays open.
+    let mut chunks = vec![b"data: {\"choices\":[{\"delta\":{\"content\":\"a\"}}]}\n".to_vec()];
+    chunks.extend(std::iter::repeat_n(b": ping\n".to_vec(), 300));
+    let (cfg, _server) = serve_chunks(vec![(200, "text/event-stream", chunks)]);
+    let cancel = Arc::new(AtomicBool::new(false));
+    let mut d = crate::Driver::start(Agent::new(cfg), "go", false, cancel.clone(), Arc::new(|| {}));
+    let mut backend = Sess(Session::new());
+    // The reply is still open: poll returns at once, again and again.
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut events = Vec::new();
+    while !events.iter().any(|e| matches!(e, Event::Text(_))) && Instant::now() < deadline {
+        assert!(d.poll(&mut backend));
+        events.extend(d.take_events());
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+    assert!(!d.poll(&mut backend));
+    events.extend(d.take_events());
+    assert_eq!(events.last(), Some(&Event::Error("stopped".into())), "{events:?}");
 }

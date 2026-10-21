@@ -36,7 +36,7 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("insert", "Block...", run_insert)
             .menu(&["Insert", "Block..."])
             .alias(&["i", "-insert", "ddinsert"])
-            .params("{name (\"*NAME\": exploded), file?: DXF/DWG path (defines or redefines block `name`, default the file name, from its model space; base point $INSBASE), at: [x,y], scale?: number | [x, y], rotation? (degrees), basePoint?: [x,y] (block coordinates), attribs?: {TAG: value}, explode?: bool, suggest?: bool (`at` is the cursor: the insertion point and, unless `rotation` is given, the rotation follow how the block's existing references sit against the nearest line or polyline segment; adds `suggested`)}")
+            .params("{name (\"*NAME\": exploded), file?: DXF/DWG path (defines or redefines block `name`, default the file name, from its model space; base point $INSBASE), at: [x,y], scale?: number | [x, y], rotation? (degrees), basePoint?: [x,y] (block coordinates), attribs?: {TAG: value}, explode?: bool, suggest?: bool (`at` is the cursor: the insertion point and, unless `rotation` is given, the rotation follow how the block's existing references sit against the nearest line or polyline segment: the offset from it, the turn to it and, when the references agree, the distance from the nearest wall end or corner; of several learned ways the one nearest the cursor wins; adds `suggested`)}")
             .interactive(|_| Ok(Box::new(InsertM::default()))),
         CommandSpec::new("attdef", "Define Attributes...", run_attdef)
             .menu(&["Draw", "Block", "Define Attributes..."])

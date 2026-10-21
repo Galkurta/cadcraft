@@ -1,6 +1,6 @@
 # Where CADCraft falls short of AutoCAD
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-21 · **Change:** minor (AI features: Assistant palette, Smart Blocks BCONVERT/BSEARCH/BDETECT/BREPLACE, MARKUPIMPORT and MARKUPASSIST: A1–A3 narrowed) · **Target:** Autodesk AutoCAD 2027
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-21 · **Change:** minor (AI features: streaming web-capable Assistant, Smart Blocks dialogs and Blocks palette, ATTACH/IMAGEATTACH/PDFATTACH and markup paper, encrypted/damaged PDF markups: A1–A3 narrowed) · **Target:** Autodesk AutoCAD 2027
 
 Every known shortfall, one row each, ranked within each section by user impact. This is the work
 list: agents pick from here (top of a section first), and remove or update a row in the same PR
@@ -142,14 +142,15 @@ Detail: [localization-parity.md](localization-parity.md).
 
 | # | Gap | Est. |
 |---|---|---|
-| A1 | Smart Blocks leftovers (BCONVERT, -BCONVERT, BSEARCH, BDETECT, BREPLACE and INSERT `suggest` placement landed, deterministic shape matching with no model): no Convert/Replace dialogs or Blocks-palette suggestions; hatches, splines and dimensions aren't matched; BDETECT links objects only at coincident key points; placement learns offset and rotation from the nearest segment, not the position along it | 6–12 |
-| A2 | Assistant leftovers (the Assistant palette, Window ▸ Assistant / ASSISTANTOPEN, drives the drawing through the MCP tool set against any OpenAI-compatible endpoint, native builds): no streaming replies; no web build; render images are always sent, so text-only models refuse them; the API key sits in plain text in the preferences file | 3–6 |
-| A3 | Markup Assist leftovers (MARKUPIMPORT reads PDF annotations with our own parser and PNG/JPG markups through the Assistant's vision model; MARKUPASSIST turns markups into MTEXT, TEXT, MLEADER and revision clouds): no markup paper (the PDF/image isn't shown underneath: needs ATTACH); encrypted PDFs, filters other than FlateDecode, damaged xrefs and rich text aren't read; the markup tag's DXF round trip is untested | 6–10 |
+| A1 | Smart Blocks leftovers (BCONVERT with its Convert dialog, -BCONVERT, BSEARCH, BDETECT with T-junction linking, BREPLACE with its Replace dialog, the Blocks palette with Suggested blocks, INSERT `suggest` placement with offset, rotation and distance from a wall end; lines, polylines with bulges/widths, arcs, circles, ellipses, splines, hatches, dimensions, text and references are matched): the Convert dialog's base-point pick borrows the ID prompt; no learning across drawings | 2–4 |
+| A2 | Assistant leftovers (streaming palette, Window ▸ Assistant, any OpenAI-compatible endpoint, vision Auto/On/Off with a text-only fallback, compact tool lines, API key in the OS credential store, web build over fetch): the web path compiles but is untested in a browser and needs a CORS-enabled endpoint; Stop waits for the next streamed chunk | 1–3 |
+| A3 | Markup Assist leftovers (MARKUPIMPORT with markup paper under the markups, MARKUPPAPERDISPLAY and MARKUPPAPERTRANSPARENCY; ATTACH, IMAGEATTACH and PDFATTACH; PDF reader with RC4/AES-128/AES-256 decryption, LZW/ASCII85/Hex/RunLength filters, xref rebuild, CropBox and rich text; tags survive DXF and DWG): PDF underlays draw vector paths only (no text, embedded images or shadings); no DWF/DGN underlays | 8–14 |
 
 ## Revision history
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-21 | minor | AI leftovers: Assistant streaming, vision fallback, credential-store key and web build; Smart Blocks matching for hatches, splines, dimensions and bulges, T-junction detection, distance-along placement, Convert/Replace dialogs and the Blocks palette; ATTACH, IMAGEATTACH, PDFATTACH with images and PDF pages drawn everywhere, markup paper; encrypted, LZW/ASCII85 and damaged PDFs read: A1–A3 narrowed |
 | 2026-10-21 | minor | AI features: Assistant palette over an OpenAI-compatible endpoint (new `cadcraft-ai` crate shared with MCP, which gains `markup_import`), Smart Blocks (BCONVERT, -BCONVERT, BSEARCH, BDETECT, BREPLACE, INSERT `suggest`), MARKUPIMPORT (PDF annotations, image markups via the vision model) and MARKUPASSIST: A1–A3 narrowed |
 | 2026-10-16 | minor | ALIASEDIT typed or from Tools ▸ Customize opens the Command Aliases dialog (user aliases next to the built-in ones; Add, Edit, Remove; OK, Cancel, Apply), #1381: U12 and E5 narrowed |
 | 2026-10-16 | minor | MOCORO (Tools ▸ Express Tools ▸ Move/Copy/Rotate): select objects and a base point once, then Move, Copy, Rotate, Scale, Base and Undo until eXit, one undo step; JSON form `{base, ops}`: E3 narrowed |

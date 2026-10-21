@@ -48,7 +48,14 @@ fn png(w: u32, h: u32) -> String {
 }
 
 fn model(s: &Session) -> Vec<(Handle, String, EntityKind)> {
-    s.doc().unwrap().model.iter().map(|e| (e.handle, e.common.layer.clone(), e.kind.clone())).collect()
+    // The paper under the markups is checked on its own (see `markup_paper_tests`).
+    s.doc()
+        .unwrap()
+        .model
+        .iter()
+        .filter(|e| !matches!(e.kind, EntityKind::Image(_)))
+        .map(|e| (e.handle, e.common.layer.clone(), e.kind.clone()))
+        .collect()
 }
 
 fn imported(s: &mut Session) -> Value {
@@ -224,4 +231,98 @@ fn interactive_import_asks_path_point_and_width() {
     assert!(s.current_prompt().is_none(), "the command is done");
     let EntityKind::MText(m) = &model(&s)[0].2 else { panic!() };
     assert_eq!((m.insert.x, m.insert.y), (50.0, 200.0));
+}
+
+// ---------------------------------------------------------------- markup paper
+
+fn papers(s: &Session) -> Vec<(String, cadcraft_doc::Image)> {
+    s.doc()
+        .unwrap()
+        .model
+        .iter()
+        .filter_map(|e| if let EntityKind::Image(i) = &e.kind { Some((e.common.layer.clone(), i.clone())) } else { None })
+        .collect()
+}
+
+/// The colour at screen pixel (x, y) of the model drawn 400 × 200 around (1200, 600).
+fn sample(s: &Session, x: u32, y: u32) -> [u8; 3] {
+    use cadcraft_render::raster::{RasterOptions, View, render};
+    let list = cadcraft_render::build(s.doc().unwrap(), &cadcraft_doc::Space::Model, &cadcraft_render::Options::default());
+    let view = View { center: cadcraft_geom::Vec2::new(1200.0, 550.0), scale: 1.0, width: 400, height: 200 };
+    let o = RasterOptions { background: cadcraft_color::Rgb(255, 255, 255), antialias: false, ..Default::default() };
+    let p = render(&list, &view, &o).unwrap().pixel(x, y).unwrap();
+    [p.red(), p.green(), p.blue()]
+}
+
+#[test]
+fn a_pdf_import_attaches_the_page_as_paper_under_the_markups() {
+    let mut s = Session::new();
+    let r = imported(&mut s);
+    assert_eq!(r["count"], 4);
+    let paper = r["paper"].as_str().unwrap().to_string();
+    let all: Vec<_> = s.doc().unwrap().model.iter().collect();
+    // First in draw order: under every markup.
+    assert_eq!(all[0].handle.hex(), paper);
+    assert_eq!(all.len(), 5);
+    let (layer, img) = papers(&s).remove(0);
+    assert_eq!((layer.as_str(), img.page, img.size), ("MARKUP-PAPER", 1, cadcraft_geom::Vec2::new(200.0, 100.0)));
+    // The same `at` and `width` as the markups: the 200 pt page is 400 units wide at (1000, 500).
+    assert_eq!((img.insert.x, img.insert.y, img.u.x, img.v.y), (1000.0, 500.0, 2.0, 2.0));
+    assert!(img.path.ends_with("review.pdf"), "{}", img.path);
+    // MARKUPPAPERDISPLAY and MARKUPPAPERTRANSPARENCY are real system variables.
+    assert_eq!(s.execute("getvar", &json!({"name": "MARKUPPAPERDISPLAY"})).unwrap()["value"], 1);
+    assert!(s.execute("setvar", &json!({"name": "MARKUPPAPERTRANSPARENCY", "value": 95})).is_err());
+    assert!(s.execute("setvar", &json!({"name": "MARKUPPAPERDISPLAY", "value": 2})).is_err());
+}
+
+#[test]
+fn an_image_import_attaches_the_image_as_paper_and_paper_false_skips_it() {
+    let mut s = Session::new();
+    let path = png(640, 480);
+    let m = json!([{"kind": "rect", "points": [[0.1, 0.1], [0.2, 0.2]]}]);
+    let r = s.execute("markupimport", &json!({"path": path, "markups": m, "at": [5, 6], "width": 320})).unwrap();
+    assert!(r["paper"].is_string());
+    let (layer, img) = papers(&s).remove(0);
+    assert_eq!(
+        (layer.as_str(), img.page, img.size, img.insert.x, img.insert.y, img.u.x),
+        ("MARKUP-PAPER", 0, cadcraft_geom::Vec2::new(640.0, 480.0), 5.0, 6.0, 0.5)
+    );
+    let mut s = Session::new();
+    let r = s.execute("markupimport", &json!({"path": png(640, 480), "markups": m, "paper": false})).unwrap();
+    assert!(r["paper"].is_null() && papers(&s).is_empty());
+}
+
+#[test]
+fn markup_paper_display_hides_and_transparency_fades_the_paper() {
+    use cadcraft_render::images::{Raster, png_data_uri};
+    let mut s = Session::new();
+    // A real red 2 × 1 image as the paper, 400 × 200 units at (1000, 500).
+    let r = Raster { width: 2, height: 1, rgba: vec![255, 0, 0, 255, 255, 0, 0, 255] };
+    let b64 = png_data_uri(&r).unwrap().strip_prefix("data:image/png;base64,").unwrap().to_string();
+    let file = tmp("paper.png", &crate::cmd::file::base64_decode(&b64).unwrap());
+    s.execute("markupimport", &json!({"path": file, "at": [1000, 500], "width": 400, "markups": []})).unwrap();
+    // Screen (200, 100) is world (1200, 550): inside the paper.
+    assert_eq!(sample(&s, 200, 100), [255, 0, 0]);
+    s.execute("setvar", &json!({"name": "MARKUPPAPERTRANSPARENCY", "value": 50})).unwrap();
+    let p = sample(&s, 200, 100);
+    assert!(p[0] == 255 && (120..140).contains(&p[1]), "half transparent: {p:?}");
+    s.execute("setvar", &json!({"name": "MARKUPPAPERDISPLAY", "value": 0})).unwrap();
+    assert_eq!(sample(&s, 200, 100), [255, 255, 255], "hidden");
+    s.execute("setvar", &json!({"name": "MARKUPPAPERDISPLAY", "value": 1})).unwrap();
+    assert!(sample(&s, 200, 100)[1] > 100, "shown again");
+}
+
+#[test]
+fn hostile_paper_params_never_panic() {
+    let mut s = Session::new();
+    for p in [json!({"paper": "yes"}), json!({"paper": null}), json!({"paper": 5}), json!({"paper": true, "page": 7})] {
+        let mut q = json!({"path": pdf()});
+        if let (Some(o), Some(extra)) = (q.as_object_mut(), p.as_object()) {
+            o.extend(extra.clone());
+        }
+        let _ = s.execute("markupimport", &q);
+    }
+    // A missing image under valid markups: the import still succeeds and the paper draws its frame.
+    let r = s.execute("markupimport", &json!({"path": "D:/gone/plan.png", "markups": []}));
+    assert!(r.is_err(), "the size can't be read");
 }

@@ -234,6 +234,8 @@ pub fn build_mesh(list: &DisplayList, origin: Vec2, bg: Rgb, lwdisplay: bool) ->
             }
             // Drawn on the CPU each frame (clipped to the view).
             Kind::Infinite { .. } => {}
+            // Textured quads, drawn by egui under this mesh (`canvas/pictures.rs`).
+            Kind::Image(_) => {}
         }
     }
     m
@@ -248,7 +250,8 @@ pub fn build_highlight_mesh(list: &DisplayList, prims: &[usize], origin: Vec2, c
     for prim in prims.iter().filter_map(|&i| list.prims.get(i)) {
         let pts = list.points(prim);
         match prim.kind {
-            Kind::Polyline => {
+            // A picture is highlighted by its frame.
+            Kind::Polyline | Kind::Image(_) => {
                 let mut run = 0.0;
                 for s in pts.windows(2) {
                     if let [a, b] = s {

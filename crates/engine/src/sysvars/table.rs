@@ -62,8 +62,14 @@ const HEADER: &[(&str, Kind, Def)] = &[
     ("HPDLGMODE", Kind::Choice(&[0, 1]), Def::Int(1)),
     ("HPNAME", Kind::Pattern, Def::Str("ANSI31")),
     ("HPSCALE", Kind::Real { min: 0.0, strict: true }, Def::Real(1.0)),
+    // 0: no image frames; 1: shown and plotted; 2: shown, not plotted.
+    ("IMAGEFRAME", Kind::Choice(&[0, 1, 2]), Def::Int(1)),
     ("INSNAME", Kind::Name, Def::Str("")),
     ("LWDEFAULT", Kind::Choice(&LINEWEIGHTS), Def::Int(25)),
+    // MARKUPIMPORT's papers (the PDF or image under the markups, on layer MARKUP-PAPER): shown or hidden,
+    // and how transparent in percent.
+    ("MARKUPPAPERDISPLAY", Kind::Choice(&[0, 1]), Def::Int(1)),
+    ("MARKUPPAPERTRANSPARENCY", Kind::Int(0, 90), Def::Int(0)),
     // Negative: Through (OFFSET picks a point).
     ("OFFSETDIST", Kind::AnyReal, Def::Real(-1.0)),
     ("OFFSETERASE", Kind::Choice(&[0, 1]), Def::Int(0)),

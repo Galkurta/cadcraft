@@ -9,11 +9,13 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use cadcraft_color::Color;
-use cadcraft_doc::{Block, Common, Drawing, EntityKind, Handle, Space};
-use cadcraft_geom::{TAU, Vec2, norm_angle};
+use cadcraft_doc::{Block, Common, DimKind, Drawing, EntityKind, Handle, Space};
+use cadcraft_geom::{Arc as GArc, Circle as GCircle, Line as GLine, PolyVertex, Polyline, Segment, TAU, Vec2, norm_angle};
 
 /// Most vertices of a polyline the matcher looks at (a longer one is not a smart-block shape).
 const MAX_VERTS: usize = 256;
+/// Most boundary loops of a hatch the matcher looks at.
+const MAX_LOOPS: usize = 16;
 /// Most objects in a sample or a detected group.
 pub const MAX_GROUP: usize = 50;
 /// Most drawing objects (and flattened block-reference objects) a search looks at.
@@ -24,6 +26,10 @@ const MAX_FOUND: usize = 10_000;
 const MAX_COORD: f64 = 1e15;
 /// Tolerance on the dimensionless invariants (bulges, ellipse ratio and parameters).
 const INV_TOL: f64 = 1e-7;
+/// Tolerance on directions (hatch angle, dimension rotation), radians.
+const ANG_TOL: f64 = 1e-4;
+/// Points sampled round a circle or an arc for the block outline.
+const OUTLINE_SAMPLES: usize = 64;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Tag {
@@ -36,20 +42,32 @@ pub enum Tag {
     Text,
     MText,
     Insert,
+    Hatch,
+    Spline,
+    Dim,
 }
 
 /// A supported object as the matcher sees it.
 #[derive(Clone, Debug)]
 pub struct Feat {
     pub tag: Tag,
-    /// Key points; they follow the object through the transform.
+    /// Key points; they follow the object through the transform. A hatch: its first boundary
+    /// loop. A spline: its control points, then its fit points.
     pub pts: Vec<Vec2>,
-    /// Polyline bulges, one per vertex (the last counts only when closed).
+    /// Polyline (and hatch loop) bulges, one per vertex (the last counts only when closed).
     pub bulge: Vec<f64>,
+    /// Polyline start and end widths per vertex: lengths, so they scale with the transform.
+    pub widths: Vec<(f64, f64)>,
     /// Lengths: they scale with the transform.
     pub rad: Vec<f64>,
     /// Invariants under the transform.
     pub scal: Vec<f64>,
+    /// Directions that turn with the transform (hatch angle, linear dimension rotation).
+    pub dirs: Vec<f64>,
+    /// A hatch's boundary loops after the first, as closed polylines.
+    pub loops: Vec<Feat>,
+    /// A spline's control point count.
+    pub split: usize,
     pub closed: bool,
     pub text: String,
 }
@@ -84,9 +102,28 @@ impl Sim {
 }
 
 impl Feat {
+    fn new(tag: Tag) -> Feat {
+        Feat {
+            tag,
+            pts: Vec::new(),
+            bulge: Vec::new(),
+            widths: Vec::new(),
+            rad: Vec::new(),
+            scal: Vec::new(),
+            dirs: Vec::new(),
+            loops: Vec::new(),
+            split: 0,
+            closed: false,
+            text: String::new(),
+        }
+    }
+
     fn finite(&self) -> bool {
+        let ok = |v: &f64| v.is_finite() && v.abs() < MAX_COORD;
         self.pts.iter().all(|p| p.is_finite() && p.x.abs() < MAX_COORD && p.y.abs() < MAX_COORD)
-            && self.rad.iter().chain(&self.bulge).chain(&self.scal).all(|v| v.is_finite() && v.abs() < MAX_COORD)
+            && self.rad.iter().chain(&self.bulge).chain(&self.scal).chain(&self.dirs).all(ok)
+            && self.widths.iter().all(|(a, b)| ok(a) && ok(b))
+            && self.loops.iter().all(Feat::finite)
             && !self.pts.is_empty()
     }
 
@@ -101,8 +138,12 @@ impl Feat {
             tag: self.tag,
             pts: self.pts.iter().map(|p| s.apply(*p)).collect(),
             bulge: self.bulge.clone(),
+            widths: self.widths.iter().map(|(a, b)| (a * s.k, b * s.k)).collect(),
             rad: self.rad.iter().map(|r| r * s.k).collect(),
             scal: self.scal.clone(),
+            dirs: self.dirs.iter().map(|a| a + s.rot).collect(),
+            loops: self.loops.iter().map(|l| l.mapped(s)).collect(),
+            split: self.split,
             closed: self.closed,
             text: self.text.clone(),
         }
@@ -111,6 +152,13 @@ impl Feat {
     /// A length measuring the object, for block similarity.
     fn measure(&self) -> f64 {
         let at = |i: usize| self.pts.get(i).copied().unwrap_or(Vec2::ZERO);
+        let path = |pts: &[Vec2], closed: bool| {
+            let open: f64 = pts.windows(2).map(|w| w.first().zip(w.get(1)).map_or(0.0, |(a, b)| a.dist(*b))).sum();
+            match (closed, pts.first(), pts.last()) {
+                (true, Some(a), Some(b)) if pts.len() > 2 => open + a.dist(*b),
+                _ => open,
+            }
+        };
         match self.tag {
             Tag::Line => at(0).dist(at(1)),
             Tag::Circle => TAU * self.rad.first().copied().unwrap_or(0.0),
@@ -123,20 +171,29 @@ impl Feat {
                 let a = at(0).dist(at(1));
                 std::f64::consts::PI * a * (1.0 + self.scal.first().copied().unwrap_or(1.0))
             }
-            Tag::Poly => {
-                let n = self.pts.len();
-                let open: f64 = self.pts.windows(2).map(|w| w.first().zip(w.get(1)).map_or(0.0, |(a, b)| a.dist(*b))).sum();
-                if self.closed && n > 2 { open + at(0).dist(at(n - 1)) } else { open }
-            }
-            Tag::Point | Tag::Text | Tag::MText | Tag::Insert => 0.0,
+            Tag::Poly | Tag::Hatch => path(&self.pts, self.closed),
+            Tag::Spline => path(self.pts.get(..self.split).unwrap_or(&[]), false),
+            Tag::Point | Tag::Text | Tag::MText | Tag::Insert | Tag::Dim => 0.0,
         }
     }
 }
 
-/// The matcher's view of an object; `None` for kinds smart blocks don't match (hatches, splines,
-/// dimensions…), arrayed references and over-long polylines.
+fn poly_feat(vertices: &[PolyVertex], closed: bool) -> Option<Feat> {
+    if vertices.is_empty() || vertices.len() > MAX_VERTS {
+        return None;
+    }
+    let mut f = Feat::new(Tag::Poly);
+    f.pts = vertices.iter().map(|v| v.p).collect();
+    f.bulge = vertices.iter().map(|v| v.bulge).collect();
+    f.widths = vertices.iter().map(|v| (v.start_width, v.end_width)).collect();
+    f.closed = closed;
+    Some(f)
+}
+
+/// The matcher's view of an object; `None` for kinds smart blocks don't match (3D objects,
+/// regions, leaders, tables, images…), arrayed references and over-long polylines or splines.
 pub fn feat_of(k: &EntityKind) -> Option<Feat> {
-    let mut f = Feat { tag: Tag::Point, pts: Vec::new(), bulge: Vec::new(), rad: Vec::new(), scal: Vec::new(), closed: false, text: String::new() };
+    let mut f = Feat::new(Tag::Point);
     match k {
         EntityKind::Line(l) => {
             f.tag = Tag::Line;
@@ -160,14 +217,78 @@ pub fn feat_of(k: &EntityKind) -> Option<Feat> {
             f.scal = vec![e.ratio, e.start, e.end];
         }
         EntityKind::LwPolyline(p) => {
-            if p.vertices.is_empty() || p.vertices.len() > MAX_VERTS {
+            f = poly_feat(&p.vertices, p.closed)?;
+            f.rad = vec![p.const_width];
+        }
+        EntityKind::Hatch(h) => {
+            if h.loops.is_empty() || h.loops.len() > MAX_LOOPS {
                 return None;
             }
-            f.tag = Tag::Poly;
-            f.pts = p.vertices.iter().map(|v| v.p).collect();
-            f.bulge = p.vertices.iter().map(|v| v.bulge).collect();
-            f.rad = vec![p.const_width];
-            f.closed = p.closed;
+            let mut loops = h.loops.iter().map(|l| poly_feat(&l.vertices, true));
+            f = loops.next().flatten()?;
+            f.tag = Tag::Hatch;
+            f.loops = loops.collect::<Option<Vec<_>>>()?;
+            f.rad = vec![h.scale];
+            f.dirs = vec![h.angle];
+            let fill = h.gradient.as_ref().map(|g| (&g.name, g.color1, g.color2, g.centered));
+            f.text = format!("{}|{}|{}|{fill:?}", h.pattern.to_ascii_uppercase(), h.solid, h.style);
+            // ponytail: the pattern origin is not compared, loops are paired in any order but only the first one anchors the match.
+        }
+        EntityKind::Spline(sp) => {
+            if sp.control.is_empty() || sp.control.len() + sp.fit.len() > MAX_VERTS || sp.knots.len() > 2 * MAX_VERTS {
+                return None;
+            }
+            f.tag = Tag::Spline;
+            f.pts = sp.control.iter().chain(&sp.fit).copied().collect();
+            f.split = sp.control.len();
+            f.closed = sp.closed;
+            let rational = sp.weights.iter().any(|w| (w - 1.0).abs() > 1e-12);
+            let weights: &[f64] = if rational { &sp.weights } else { &[] };
+            // Knots as fractions of their span: a scaled copy keeps them.
+            let (lo, hi) = sp.knots.iter().fold((f64::MAX, f64::MIN), |(lo, hi), k| (lo.min(*k), hi.max(*k)));
+            let span = if hi > lo { hi - lo } else { 1.0 };
+            f.scal = [sp.degree as f64, weights.len() as f64]
+                .into_iter()
+                .chain(weights.iter().copied())
+                .chain(sp.knots.iter().map(|k| (k - lo) / span))
+                .collect();
+        }
+        EntityKind::Dimension(d) => {
+            f.tag = Tag::Dim;
+            // The definition points each kind uses: the others hold no data.
+            let (p13, p15, p16, name) = match d.kind {
+                DimKind::Linear { rotation } => {
+                    f.dirs = vec![rotation];
+                    (true, false, false, "linear")
+                }
+                DimKind::Aligned => (true, false, false, "aligned"),
+                DimKind::Angular => (true, true, true, "angular"),
+                DimKind::Angular3P => (true, true, false, "angular3p"),
+                DimKind::Diameter => (false, true, false, "diameter"),
+                DimKind::Radius => (false, true, false, "radius"),
+                DimKind::Ordinate { x_type } => (true, false, false, if x_type { "ordinate-x" } else { "ordinate-y" }),
+                DimKind::ArcLength => (true, true, false, "arclength"),
+            };
+            f.pts.push(d.defpt.xy());
+            if p13 {
+                f.pts.extend([d.p13.xy(), d.p14.xy()]);
+            }
+            if p15 {
+                f.pts.push(d.p15.xy());
+            }
+            if p16 {
+                f.pts.push(d.p16.xy());
+            }
+            if d.user_text_pos {
+                f.pts.push(d.text_mid.xy());
+            }
+            f.text = format!(
+                "{name}|{}|{}|{}|{}",
+                d.style.to_ascii_uppercase(),
+                d.text,
+                !d.marks.is_empty(),
+                serde_json::Value::Object(d.overrides.clone())
+            );
         }
         EntityKind::Point(p) => f.pts = vec![p.p.xy()],
         EntityKind::Text(t) => {
@@ -197,18 +318,20 @@ pub fn feat_of(k: &EntityKind) -> Option<Feat> {
 // ---------- correspondences between equal objects ----------
 
 /// How many ways `f`'s key points can be read in order: a line either way round, an open
-/// polyline from either end, a closed one from any vertex in either direction.
+/// polyline or spline from either end, a closed polyline (or a hatch's first loop) from any
+/// vertex in either direction.
 fn variants(f: &Feat) -> usize {
     let n = f.pts.len();
     match f.tag {
         Tag::Line => 2,
-        Tag::Poly if n > 1 => {
+        Tag::Poly | Tag::Hatch if n > 1 => {
             if f.closed {
                 2 * n
             } else {
                 2
             }
         }
+        Tag::Spline if !f.closed => 2,
         _ => 1,
     }
 }
@@ -224,7 +347,7 @@ fn map_idx(f: &Feat, v: usize, i: usize) -> usize {
                 1usize.saturating_sub(i)
             }
         }
-        Tag::Poly if n > 1 => {
+        Tag::Poly | Tag::Hatch if n > 1 => {
             if f.closed {
                 if v < n { (v + i) % n } else { (v - n + n - i % n) % n }
             } else if v == 0 {
@@ -233,6 +356,11 @@ fn map_idx(f: &Feat, v: usize, i: usize) -> usize {
                 n - 1 - i.min(n - 1)
             }
         }
+        // Control points, then fit points: each run read backwards.
+        Tag::Spline if v != 0 => {
+            let c = f.split.min(n);
+            if i < c { c - 1 - i } else { n.saturating_sub(1 + (i - c).min(n.saturating_sub(c + 1))) }
+        }
         _ => i,
     }
 }
@@ -240,8 +368,8 @@ fn map_idx(f: &Feat, v: usize, i: usize) -> usize {
 /// Whether reading `v` runs along `f`'s own direction.
 fn forward(f: &Feat, v: usize) -> bool {
     match f.tag {
-        Tag::Line => v == 0,
-        Tag::Poly if f.pts.len() > 1 => {
+        Tag::Line | Tag::Spline => v == 0,
+        Tag::Poly | Tag::Hatch if f.pts.len() > 1 => {
             if f.closed {
                 v < f.pts.len()
             } else {
@@ -256,12 +384,44 @@ fn near_all(a: &[f64], b: &[f64], tol: f64) -> bool {
     a.len() == b.len() && a.iter().zip(b).all(|(x, y)| (x - y).abs() <= tol)
 }
 
+/// A spline's invariants read from its other end: weights and knots reversed.
+fn spline_reversed(scal: &[f64]) -> Vec<f64> {
+    let nw = scal.get(1).map_or(0, |n| *n as usize);
+    let (head, rest) = scal.split_at(2.min(scal.len()));
+    let (w, knots) = rest.split_at(nw.min(rest.len()));
+    head.iter().copied().chain(w.iter().rev().copied()).chain(knots.iter().rev().map(|k| 1.0 - k)).collect()
+}
+
+/// Whether two directions are the same turn (`period`: 2π, or π for lines without a sense).
+fn same_dir(a: f64, b: f64, period: f64) -> bool {
+    let d = (a - b).rem_euclid(period);
+    d <= ANG_TOL || period - d <= ANG_TOL
+}
+
 /// Whether `s` (already transformed) is `d` read in way `v`.
 fn eq_under(s: &Feat, d: &Feat, tol: f64, v: usize) -> bool {
-    if s.tag != d.tag || s.closed != d.closed || s.pts.len() != d.pts.len() || s.bulge.len() != d.bulge.len() || s.text != d.text {
+    if s.tag != d.tag
+        || s.closed != d.closed
+        || s.pts.len() != d.pts.len()
+        || s.bulge.len() != d.bulge.len()
+        || s.widths.len() != d.widths.len()
+        || s.dirs.len() != d.dirs.len()
+        || s.loops.len() != d.loops.len()
+        || s.split != d.split
+        || s.text != d.text
+    {
         return false;
     }
-    if !near_all(&s.rad, &d.rad, tol) || !near_all(&s.scal, &d.scal, INV_TOL) {
+    let scal_ok = if s.tag == Tag::Spline && !forward(d, v) {
+        near_all(&s.scal, &spline_reversed(&d.scal), INV_TOL)
+    } else {
+        near_all(&s.scal, &d.scal, INV_TOL)
+    };
+    if !near_all(&s.rad, &d.rad, tol) || !scal_ok {
+        return false;
+    }
+    let period = if s.tag == Tag::Dim { std::f64::consts::PI } else { TAU };
+    if !s.dirs.iter().zip(&d.dirs).all(|(a, b)| same_dir(*a, *b, period)) {
         return false;
     }
     let n = s.pts.len();
@@ -271,7 +431,7 @@ fn eq_under(s: &Feat, d: &Feat, tol: f64, v: usize) -> bool {
             _ => return false,
         }
     }
-    if s.tag == Tag::Poly {
+    if matches!(s.tag, Tag::Poly | Tag::Hatch) {
         let segs = if s.closed { n } else { n.saturating_sub(1) };
         let fwd = forward(d, v);
         for i in 0..segs {
@@ -281,6 +441,22 @@ fn eq_under(s: &Feat, d: &Feat, tol: f64, v: usize) -> bool {
                 (Some(x), Some(y)) if (x - sign * y).abs() <= INV_TOL => {}
                 _ => return false,
             }
+            // A segment read backwards starts where it ends.
+            let dw = d.widths.get(idx).map(|(w0, w1)| if fwd { (*w0, *w1) } else { (*w1, *w0) });
+            match (s.widths.get(i), dw) {
+                (Some((x0, x1)), Some((y0, y1))) if (x0 - y0).abs() <= tol && (x1 - y1).abs() <= tol => {}
+                _ => return false,
+            }
+        }
+    }
+    // The other loops of a hatch pair up with the other's, in any order.
+    let mut free: Vec<&Feat> = d.loops.iter().collect();
+    for l in &s.loops {
+        match free.iter().position(|o| (0..variants(o)).any(|lv| eq_under(l, o, tol, lv))) {
+            Some(i) => {
+                free.swap_remove(i);
+            }
+            None => return false,
         }
     }
     true
@@ -624,40 +800,177 @@ impl Searcher<'_> {
     }
 }
 
+// ---------- curves ----------
+
+/// What a straight or curved object is made of, for touching tests and outlines.
+enum Curve {
+    Seg(Segment),
+    Circle(GCircle),
+}
+
+impl Curve {
+    fn closest(&self, p: Vec2) -> Vec2 {
+        match self {
+            Curve::Seg(s) => s.closest(p),
+            Curve::Circle(c) => c.closest(p),
+        }
+    }
+
+    fn len(&self) -> f64 {
+        match self {
+            Curve::Seg(s) => s.len(),
+            Curve::Circle(c) => TAU * c.radius,
+        }
+    }
+
+    /// The point `t` (0..=1) of the way along.
+    fn at(&self, t: f64) -> Vec2 {
+        match self {
+            Curve::Seg(s) => s.at(t),
+            Curve::Circle(c) => Vec2::polar(c.center, c.radius, t * TAU),
+        }
+    }
+}
+
+/// The lines, arcs and circles of `f` (a closed hatch loop counts as a polyline); none for the
+/// other kinds.
+fn curves(f: &Feat) -> Vec<Curve> {
+    let (Some(&a), Some(&b)) = (f.pts.first(), f.pts.get(1)) else {
+        return match (f.tag, f.pts.first(), f.rad.first()) {
+            (Tag::Circle, Some(c), Some(r)) => vec![Curve::Circle(GCircle::new(*c, *r))],
+            _ => Vec::new(),
+        };
+    };
+    match f.tag {
+        Tag::Line => vec![Curve::Seg(Segment::Line(GLine::new(a, b)))],
+        Tag::Arc => match (f.pts.get(2), f.rad.first()) {
+            (Some(e), Some(r)) => vec![Curve::Seg(Segment::Arc { arc: GArc::new(a, *r, a.angle_to(b), a.angle_to(*e)), ccw: true })],
+            _ => Vec::new(),
+        },
+        Tag::Poly | Tag::Hatch => {
+            let vertices = f.pts.iter().zip(&f.bulge).map(|(p, bulge)| PolyVertex::with_bulge(*p, *bulge)).collect();
+            Polyline { vertices, closed: f.closed }.segments().into_iter().map(Curve::Seg).collect()
+        }
+        _ => Vec::new(),
+    }
+}
+
 // ---------- detection of repeated groups ----------
 
-/// Groups of touching objects (key points within `gap` of each other) of 2..=`max_size`
-/// objects, as pool indices; flattened objects are left out.
-// ponytail: links need coincident key points (end points, centres); a T-junction mid-segment does not link.
+fn uf_find(p: &mut [usize], mut i: usize) -> usize {
+    while let Some(&up) = p.get(i) {
+        if up == i {
+            break;
+        }
+        let grand = p.get(up).copied().unwrap_or(up);
+        if let Some(slot) = p.get_mut(i) {
+            *slot = grand;
+        }
+        i = grand;
+    }
+    i
+}
+
+fn uf_union(p: &mut [usize], i: usize, j: usize) {
+    let (a, b) = (uf_find(p, i), uf_find(p, j));
+    if let Some(slot) = p.get_mut(a) {
+        *slot = b;
+    }
+}
+
+/// The points of an object that link it to the objects it touches: its key points, and the
+/// four quadrant points of a circle.
+fn link_points(f: &Feat) -> Vec<Vec2> {
+    let mut pts = f.pts.clone();
+    if f.tag == Tag::Circle
+        && let (Some(c), Some(r)) = (f.pts.first(), f.rad.first())
+    {
+        pts.extend([*c + Vec2::new(*r, 0.0), *c + Vec2::new(-*r, 0.0), *c + Vec2::new(0.0, *r), *c + Vec2::new(0.0, -*r)]);
+    }
+    pts
+}
+
+/// Most grid cells one curve registers in; a longer one is sampled more coarsely.
+const MAX_CELLS_PER_CURVE: usize = 8192;
+
+/// Links an object to another when one of its link points lies on the other's line, arc or
+/// circle (a T-junction: a wall ending on another wall's side). Curves go into a grid of cells
+/// at least twice `gap` wide, one registration per cell they pass through.
+fn link_t_junctions(pool: &Pool, gap: f64, parent: &mut [usize], budget: &mut u64) {
+    let (mut lo, mut hi) = (Vec2::new(f64::MAX, f64::MAX), Vec2::new(f64::MIN, f64::MIN));
+    for e in pool.ents.iter().filter(|e| !e.flat) {
+        for p in &e.feat.pts {
+            lo = lo.min(*p);
+            hi = hi.max(*p);
+        }
+    }
+    if !(lo.is_finite() && hi.is_finite()) {
+        return;
+    }
+    let cell = (gap * 2.0).max((hi.x - lo.x).max(hi.y - lo.y) / 1024.0).max(1e-9);
+    if !cell.is_finite() {
+        return;
+    }
+    let key = |p: Vec2| ((p.x / cell).floor() as i64, (p.y / cell).floor() as i64);
+    let mut all: Vec<(usize, Curve)> = Vec::new();
+    let mut grid: HashMap<(i64, i64), Vec<usize>> = HashMap::new();
+    for (i, e) in pool.ents.iter().enumerate().filter(|(_, e)| !e.flat) {
+        for c in curves(&e.feat) {
+            let steps = ((c.len() / (cell / 2.0)).ceil().max(1.0) as usize).min(MAX_CELLS_PER_CURVE);
+            let ci = all.len();
+            let mut last = None;
+            for s in 0..=steps {
+                let k = key(c.at(s as f64 / steps as f64));
+                if last != Some(k) {
+                    if *budget == 0 {
+                        return;
+                    }
+                    *budget -= 1;
+                    grid.entry(k).or_default().push(ci);
+                    last = Some(k);
+                }
+            }
+            all.push((i, c));
+        }
+    }
+    for (i, e) in pool.ents.iter().enumerate().filter(|(_, e)| !e.flat) {
+        for p in link_points(&e.feat) {
+            let (cx, cy) = key(p);
+            for dx in -1..=1i64 {
+                for dy in -1..=1i64 {
+                    let Some(near) = grid.get(&(cx.saturating_add(dx), cy.saturating_add(dy))) else { continue };
+                    for &ci in near {
+                        let Some((j, c)) = all.get(ci) else { continue };
+                        if *j == i || uf_find(parent, i) == uf_find(parent, *j) {
+                            continue;
+                        }
+                        if *budget == 0 {
+                            return;
+                        }
+                        *budget -= 1;
+                        if c.closest(p).near(p, gap) {
+                            uf_union(parent, i, *j);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Groups of touching objects (key points within `gap` of each other, or a key point on
+/// another object's line, arc or circle) of 2..=`max_size` objects, as pool indices; flattened
+/// objects are left out.
 pub fn clusters(pool: &Pool, gap: f64, max_size: usize, budget: &mut u64) -> Vec<Vec<usize>> {
     let cell = gap.max(1e-9);
     let key = |p: Vec2| ((p.x / cell).floor() as i64, (p.y / cell).floor() as i64);
     let mut parent: Vec<usize> = (0..pool.ents.len()).collect();
-    fn find(p: &mut [usize], mut i: usize) -> usize {
-        while let Some(&up) = p.get(i) {
-            if up == i {
-                break;
-            }
-            let grand = p.get(up).copied().unwrap_or(up);
-            if let Some(slot) = p.get_mut(i) {
-                *slot = grand;
-            }
-            i = grand;
-        }
-        i
-    }
     let mut grid: HashMap<(i64, i64), Vec<(usize, Vec2)>> = HashMap::new();
     'all: for (i, e) in pool.ents.iter().enumerate() {
         if e.flat {
             continue;
         }
-        let mut pts = e.feat.pts.clone();
-        if e.feat.tag == Tag::Circle
-            && let (Some(c), Some(r)) = (e.feat.pts.first(), e.feat.rad.first())
-        {
-            pts.extend([*c + Vec2::new(*r, 0.0), *c + Vec2::new(-*r, 0.0), *c + Vec2::new(0.0, *r), *c + Vec2::new(0.0, -*r)]);
-        }
-        for p in pts {
+        for p in link_points(&e.feat) {
             let (cx, cy) = key(p);
             for dx in -1..=1i64 {
                 for dy in -1..=1i64 {
@@ -668,10 +981,7 @@ pub fn clusters(pool: &Pool, gap: f64, max_size: usize, budget: &mut u64) -> Vec
                         }
                         *budget -= 1;
                         if j != i && q.near(p, gap) {
-                            let (a, b) = (find(&mut parent, i), find(&mut parent, j));
-                            if let Some(slot) = parent.get_mut(a) {
-                                *slot = b;
-                            }
+                            uf_union(&mut parent, i, j);
                         }
                     }
                 }
@@ -679,10 +989,11 @@ pub fn clusters(pool: &Pool, gap: f64, max_size: usize, budget: &mut u64) -> Vec
             grid.entry((cx, cy)).or_default().push((i, p));
         }
     }
+    link_t_junctions(pool, gap, &mut parent, budget);
     let mut groups: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
     for (i, e) in pool.ents.iter().enumerate() {
         if !e.flat {
-            let r = find(&mut parent, i);
+            let r = uf_find(&mut parent, i);
             groups.entry(r).or_default().push(i);
         }
     }
@@ -705,30 +1016,135 @@ pub fn histogram(pool: &Pool, group: &[usize]) -> Vec<(u8, u32)> {
 /// A block definition's shape summary, independent of position, rotation and size.
 pub struct Sig {
     kinds: BTreeMap<&'static str, u32>,
-    /// Short side over long side of the extents.
+    /// Short side over long side of the smallest rectangle (at any rotation) holding the shape.
     aspect: f64,
-    /// Object lengths over the extents' diagonal, longest first.
+    /// Object lengths over that rectangle's diagonal, longest first.
     lens: Vec<f64>,
 }
 
+/// Most outline points the signature's rectangle is fitted to.
+const MAX_CLOUD: usize = 8192;
+
+/// Points along the outline of `f`, enough to bound its shape at any rotation.
+fn outline(f: &Feat, out: &mut Vec<Vec2>) {
+    let sweep_of = |a: f64, b: f64| match (b - a).rem_euclid(TAU) {
+        s if s < 1e-12 => TAU,
+        s => s,
+    };
+    match (f.tag, f.pts.first(), f.pts.get(1)) {
+        (Tag::Circle | Tag::Arc | Tag::Ellipse | Tag::Poly | Tag::Hatch, ..) => {}
+        _ => {
+            out.extend(f.pts.iter().copied());
+            return;
+        }
+    }
+    if f.tag == Tag::Ellipse {
+        if let (Some(&c), Some(&m), [ratio, start, end, ..]) = (f.pts.first(), f.pts.get(1), f.scal.as_slice()) {
+            let (major, sweep) = (m - c, sweep_of(*start, *end));
+            let minor = major.perp() * *ratio;
+            out.extend((0..=OUTLINE_SAMPLES).map(|i| {
+                let t = start + sweep * i as f64 / OUTLINE_SAMPLES as f64;
+                c + major * t.cos() + minor * t.sin()
+            }));
+        }
+        return;
+    }
+    if matches!(f.tag, Tag::Poly | Tag::Hatch) {
+        out.extend(f.pts.iter().copied());
+    }
+    for c in curves(f) {
+        let n = match &c {
+            Curve::Seg(Segment::Line(_)) => 1,
+            _ => OUTLINE_SAMPLES,
+        };
+        out.extend((0..=n).map(|i| c.at(i as f64 / n as f64)));
+    }
+    if f.tag == Tag::Hatch {
+        out.extend(f.loops.iter().flat_map(|l| l.pts.iter().copied()));
+    }
+}
+
+/// The convex hull of `pts` (counter-clockwise, no repeated points).
+fn convex_hull(mut pts: Vec<Vec2>) -> Vec<Vec2> {
+    pts.sort_by(|a, b| a.x.total_cmp(&b.x).then(a.y.total_cmp(&b.y)));
+    pts.dedup();
+    if pts.len() < 3 {
+        return pts;
+    }
+    let mut hull: Vec<Vec2> = Vec::with_capacity(pts.len() * 2);
+    for pass in 0..2 {
+        let floor = hull.len() + 1;
+        let mut walk = |p: Vec2| {
+            while hull.len() >= floor.max(2) && hull.get(hull.len() - 2).zip(hull.last()).is_some_and(|(a, b)| (*b - *a).cross(p - *a) <= 0.0) {
+                hull.pop();
+            }
+            hull.push(p);
+        };
+        if pass == 0 {
+            pts.iter().for_each(|p| walk(*p));
+        } else {
+            pts.iter().rev().skip(1).for_each(|p| walk(*p));
+        }
+    }
+    hull.pop();
+    hull
+}
+
+/// Most hull points the rectangle fit looks at.
+const MAX_HULL: usize = 1024;
+
+/// Sides of the smallest rectangle, at any rotation, holding `pts`. Among rectangles of equal
+/// area the thinnest wins, so the result does not depend on how the points are turned.
+fn min_area_rect(pts: Vec<Vec2>) -> (f64, f64) {
+    let mut hull = convex_hull(pts);
+    // ponytail: a hull of more than MAX_HULL points (a huge, round shape) is thinned, so the rectangle is approximate there; the fit is quadratic in it.
+    if hull.len() > MAX_HULL {
+        let stride = hull.len().div_ceil(MAX_HULL);
+        hull = hull.into_iter().step_by(stride).collect();
+    }
+    let (Some(&first), Some(&second)) = (hull.first(), hull.get(1)) else { return (0.0, 0.0) };
+    if hull.len() < 3 {
+        return (first.dist(second), 0.0);
+    }
+    let mut best: Option<(f64, f64, f64)> = None;
+    for (i, a) in hull.iter().enumerate() {
+        let Some(b) = hull.get((i + 1) % hull.len()) else { continue };
+        let d = (*b - *a).normalized();
+        let (mut lo, mut hi) = (Vec2::new(f64::MAX, f64::MAX), Vec2::new(f64::MIN, f64::MIN));
+        for p in &hull {
+            let q = Vec2::new((*p - *a).dot(d), (*p - *a).dot(d.perp()));
+            lo = lo.min(q);
+            hi = hi.max(q);
+        }
+        let (long, short) = ((hi.x - lo.x).max(hi.y - lo.y), (hi.x - lo.x).min(hi.y - lo.y));
+        let area = long * short;
+        if best.is_none_or(|(ba, _, bs)| area < ba * (1.0 - 1e-9) || (area <= ba * (1.0 + 1e-9) && short < bs)) {
+            best = Some((area, long, short));
+        }
+    }
+    best.map_or((0.0, 0.0), |(_, long, short)| (long, short))
+}
+
 pub fn block_sig(b: &Block) -> Sig {
+    sig_of(b.entities.iter().map(|e| &e.kind))
+}
+
+/// The signature of a group of objects, as if they were a block.
+pub fn sig_of<'a>(kinds_in: impl Iterator<Item = &'a EntityKind>) -> Sig {
     let mut kinds: BTreeMap<&'static str, u32> = BTreeMap::new();
-    let (mut lo, mut hi) = (Vec2::new(f64::MAX, f64::MAX), Vec2::new(f64::MIN, f64::MIN));
+    let mut cloud: Vec<Vec2> = Vec::new();
     let mut lens = Vec::new();
-    for e in b.entities.iter() {
-        *kinds.entry(e.kind.type_name()).or_default() += 1;
-        if let Some(f) = feat_of(&e.kind) {
-            let r = f.rad.first().copied().filter(|_| matches!(f.tag, Tag::Circle | Tag::Arc)).unwrap_or(0.0);
-            for p in &f.pts {
-                lo = lo.min(*p - Vec2::new(r, r));
-                hi = hi.max(*p + Vec2::new(r, r));
+    for k in kinds_in {
+        *kinds.entry(k.type_name()).or_default() += 1;
+        if let Some(f) = feat_of(k) {
+            if cloud.len() < MAX_CLOUD {
+                outline(&f, &mut cloud);
             }
             lens.push(f.measure());
         }
     }
-    let (w, h) = if lo.is_finite() && hi.is_finite() { (hi.x - lo.x, hi.y - lo.y) } else { (0.0, 0.0) };
-    let (long, short) = (w.max(h), w.min(h));
-    let diag = w.hypot(h);
+    let (long, short) = min_area_rect(cloud);
+    let diag = long.hypot(short);
     let aspect = if long > 0.0 { short / long } else { 1.0 };
     let mut lens: Vec<f64> = lens.into_iter().map(|l| if diag > 0.0 { l / diag } else { 0.0 }).collect();
     lens.sort_by(|a, b| b.total_cmp(a));
@@ -736,8 +1152,8 @@ pub fn block_sig(b: &Block) -> Sig {
     Sig { kinds, aspect, lens }
 }
 
-/// 0 for blocks of the same shape; grows with differences in object kinds, extents' aspect
-/// and the distribution of object lengths.
+/// 0 for blocks of the same shape; grows with differences in object kinds, the rectangle's
+/// aspect and the distribution of object lengths.
 pub fn distance(a: &Sig, b: &Sig) -> f64 {
     let all: BTreeSet<&str> = a.kinds.keys().chain(b.kinds.keys()).copied().collect();
     let total: u32 = a.kinds.values().chain(b.kinds.values()).sum();

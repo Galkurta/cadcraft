@@ -101,6 +101,11 @@ pub fn export_list(list: &cadcraft_render::DisplayList, window: Option<Bounds2>)
                     let _ = write!(s, r#"<circle cx="{:.dp$}" cy="{:.dp$}" r="{:.dp$}" fill="{c}"{op}/>"#, tx(q.x), ty(q.y), stroke);
                 }
             }
+            Kind::Image(ix) => {
+                if let Some(img) = list.images.get(ix as usize) {
+                    picture(&mut s, img, &op, x0, y1, dp);
+                }
+            }
             Kind::Infinite { ray } => {
                 if let (Some(bp), Some(dir)) = (pts.first(), pts.get(1)) {
                     // A window can lie far from the base point: reach past it.
@@ -121,4 +126,44 @@ pub fn export_list(list: &cadcraft_render::DisplayList, window: Option<Bounds2>)
     }
     s.push_str("</svg>");
     s
+}
+
+/// An `<image>` with the picture inlined as a PNG data URI (a PDF page at 2048 pixels), inside
+/// its clip polygons; a picture that can't be read is left out.
+fn picture(s: &mut String, img: &cadcraft_render::ImageDraw, op: &str, x0: f64, y1: f64, dp: usize) {
+    if img.missing {
+        return;
+    }
+    let Ok(raster) = cadcraft_render::images::load(&img.path, img.page, 2048) else { return };
+    let faded;
+    let raster = if img.fade > 0 {
+        faded = cadcraft_render::images::faded(&raster, img.fade, Rgb(255, 255, 255));
+        &faded
+    } else {
+        &*raster
+    };
+    let Some(uri) = cadcraft_render::images::png_data_uri(raster) else { return };
+    let (w, h) = (f64::from(raster.width), f64::from(raster.height));
+    let (o, u, v) = (img.origin, img.u, img.v);
+    let m = [u.x / w, -u.y / w, -v.x / h, v.y / h, o.x - x0 + v.x, y1 - o.y - v.y];
+    if !m.iter().all(|n| n.is_finite()) {
+        return;
+    }
+    // Each clip polygon is a group around the image, so all of them apply.
+    let mut closing = 0;
+    for poly in &img.clips {
+        let pts: String = poly.iter().map(|q| format!("{:.dp$},{:.dp$} ", q.x - x0, y1 - q.y)).collect();
+        // The output length so far makes the id unique.
+        let id = s.len();
+        let _ = write!(s, r#"<clipPath id="clip{id}"><polygon points="{}"/></clipPath><g clip-path="url(#clip{id})">"#, pts.trim_end());
+        closing += 1;
+    }
+    let _ = write!(
+        s,
+        r#"<image{op} width="{}" height="{}" transform="matrix({:.12} {:.12} {:.12} {:.12} {:.dp$} {:.dp$})" href="{uri}"/>"#,
+        raster.width, raster.height, m[0], m[1], m[2], m[3], m[4], m[5]
+    );
+    for _ in 0..closing {
+        s.push_str("</g>");
+    }
 }
