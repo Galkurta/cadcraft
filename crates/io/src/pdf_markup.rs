@@ -770,6 +770,10 @@ impl<'a> Pdf<'a> {
         if !self.objstms.insert(s) {
             return Some(());
         }
+        // An object stream is a direct object; a chain of `In` entries would recurse without bound.
+        if !matches!(self.xref.get(&s), Some(Entry::At(_))) {
+            return None;
+        }
         let Obj::Stream(d, a, b, id) = self.get(s)? else { return None };
         let count = self.num_of(&d, "N")? as usize;
         let first = self.num_of(&d, "First")? as usize;

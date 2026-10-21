@@ -292,7 +292,7 @@ impl Font {
         let first = pdf.num_of(fd, "FirstChar").unwrap_or(0.0).max(0.0) as usize;
         if let Obj::Arr(ws) = pdf.val(fd, "Widths") {
             for (i, w) in ws.iter().enumerate().take(256) {
-                if let (Obj::Num(w), Some(slot)) = (pdf.resolve(w), self.widths.get_mut(first + i)) {
+                if let (Obj::Num(w), Some(slot)) = (pdf.resolve(w), self.widths.get_mut(first.saturating_add(i))) {
                     *slot = Some(w);
                 }
             }
@@ -332,7 +332,7 @@ impl Font {
         if let Obj::Arr(ws) = pdf.val(fd, "Widths") {
             for (i, w) in ws.iter().enumerate().take(256) {
                 // Glyph space → text space: widths are scaled by the font matrix right here.
-                if let (Obj::Num(w), Some(slot)) = (pdf.resolve(w), self.widths.get_mut(first + i)) {
+                if let (Obj::Num(w), Some(slot)) = (pdf.resolve(w), self.widths.get_mut(first.saturating_add(i))) {
                     *slot = Some(w * matrix[0] * 1000.0);
                 }
             }
@@ -392,14 +392,14 @@ impl Font {
                 Some(Obj::Arr(list)) => {
                     for (k, v) in list.iter().enumerate().take(MAX_W_ENTRIES) {
                         if let Obj::Num(v) = pdf.resolve(v) {
-                            self.cid_w.insert(c as u32 + k as u32, v);
+                            self.cid_w.insert((c as u32).saturating_add(k as u32), v);
                         }
                     }
                     i += 2;
                 }
                 Some(Obj::Num(c2)) => {
                     let Some(Obj::Num(v)) = w.get(i + 2).map(|o| pdf.resolve(o)) else { break };
-                    let (lo, hi) = (c.max(0.0) as u32, (c2.max(0.0) as u32).min(c.max(0.0) as u32 + 65_535));
+                    let (lo, hi) = (c.max(0.0) as u32, (c2.max(0.0) as u32).min((c.max(0.0) as u32).saturating_add(65_535)));
                     for cid in lo..=hi {
                         self.cid_w.insert(cid, v);
                     }

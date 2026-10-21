@@ -348,7 +348,6 @@ fn run_ui_command_inner(app: &mut CadApp, id: &str, params: &Value) -> Option<Re
         }
         "ui.dialog.language"
         | "ui.dialog.layers"
-        | "ui.dialog.blocks"
         | "ui.dialog.dsettings"
         | "ui.dialog.about"
         | "ui.dialog.commands"

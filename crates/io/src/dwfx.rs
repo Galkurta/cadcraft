@@ -10,7 +10,7 @@
 //! The package is hostile input: parts, nodes, depth, segments, text and picture pixels are all
 //! capped, there is no recursion over the document (an explicit stack), and nothing panics.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use cadcraft_fonts::TextFont;
@@ -49,7 +49,16 @@ pub(crate) fn is_dwfx(zip: &Zip) -> bool {
 
 pub(crate) fn sheets(zip: &Zip) -> Result<Vec<String>, String> {
     let parts = page_parts(zip)?;
-    Ok(parts.iter().enumerate().map(|(i, p)| page_name(zip, p).unwrap_or_else(|| format!("Sheet {}", i + 1))).collect())
+    // Names come from reading the parts; past a total budget the rest are numbered.
+    let mut left = MAX_XML;
+    Ok(parts
+        .iter()
+        .enumerate()
+        .map(|(i, p)| {
+            let name = if left > 0 { page_name(zip, p, &mut left) } else { None };
+            name.unwrap_or_else(|| format!("Sheet {}", i + 1))
+        })
+        .collect())
 }
 
 pub(crate) fn scene(zip: &Zip, index: usize) -> Result<Scene, String> {
@@ -142,6 +151,8 @@ fn page_parts(zip: &Zip) -> Result<Vec<String>, String> {
         && let Ok(dom) = parse_xml(&read_text(zip, &seq)?)
     {
         let mut docs = 0;
+        // Each document and page part is read once; all the reads share one inflate budget.
+        let (mut seen_docs, mut seen_pages, mut left) = (HashSet::new(), HashSet::new(), MAX_XML);
         for n in 0..dom.nodes.len() {
             if dom.name(n) != "DocumentReference" {
                 continue;
@@ -149,15 +160,25 @@ fn page_parts(zip: &Zip) -> Result<Vec<String>, String> {
             docs += 1;
             let (Some(src), true) = (dom.attr(n, "Source"), docs <= MAX_DOCS) else { continue };
             let doc = resolve(&seq, src);
+            if !seen_docs.insert(doc.clone()) {
+                continue;
+            }
             let Ok(text) = read_text(zip, &doc) else { continue };
+            left = left.saturating_sub(text.len());
             let Ok(d) = parse_xml(&text) else { continue };
             for p in 0..d.nodes.len() {
                 if d.name(p) == "PageContent"
                     && let Some(s) = d.attr(p, "Source")
                     && pages.len() < MAX_PAGES
                 {
-                    pages.push(resolve(&doc, s));
+                    let page = resolve(&doc, s);
+                    if seen_pages.insert(page.clone()) {
+                        pages.push(page);
+                    }
                 }
+            }
+            if left == 0 {
+                break;
             }
         }
     }
@@ -168,8 +189,9 @@ fn page_parts(zip: &Zip) -> Result<Vec<String>, String> {
 }
 
 /// The `Name` of the page's root element, if it has one.
-fn page_name(zip: &Zip, part: &str) -> Option<String> {
+fn page_name(zip: &Zip, part: &str, left: &mut usize) -> Option<String> {
     let text = read_text(zip, part).ok()?;
+    *left = left.saturating_sub(text.len());
     let mut r = Reader::from_str(&text);
     loop {
         match r.read_event().ok()? {

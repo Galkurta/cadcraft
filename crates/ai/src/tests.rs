@@ -424,3 +424,76 @@ fn a_driver_polls_without_blocking_and_stops_on_cancel() {
     events.extend(d.take_events());
     assert_eq!(events.last(), Some(&Event::Error("stopped".into())), "{events:?}");
 }
+
+#[test]
+fn the_api_key_only_travels_over_https_or_loopback() {
+    use crate::insecure_key_host as bad;
+    for url in [
+        "http://127.0.0.1:8080/v1",
+        "http://127.9.9.9/v1",
+        "http://localhost:11434/v1",
+        "http://LOCALHOST/v1",
+        "http://[::1]:8080/v1",
+        "http://user:pw@localhost/v1",
+        "https://example.com/v1",
+    ] {
+        assert_eq!(bad(url, "k"), None, "{url}");
+    }
+    for (url, host) in [
+        ("http://example.invalid/v1", "example.invalid"),
+        ("http://127.0.0.1.evil.com/v1", "127.0.0.1.evil.com"),
+        ("http://localhost@evil.com/v1", "evil.com"),
+        ("http://localhost:80@evil.com:81/v1", "evil.com"),
+        ("http://evil.com#@127.0.0.1/v1", "evil.com"),
+        ("http://evil.com?@127.0.0.1/v1", "evil.com"),
+        ("http://[2001:db8::1]:80/v1", "2001:db8::1"),
+        ("http://", ""),
+    ] {
+        assert_eq!(bad(url, "k").as_deref(), Some(host), "{url}");
+    }
+    assert_eq!(bad("http://example.invalid/v1", ""), None, "no key, nothing to protect");
+
+    let cfg = Config { base_url: "http://example.invalid/v1".into(), model: "m".into(), api_key: "k".into(), ..Config::default() };
+    let err = crate::transport::start(&cfg, &json!({}), false, std::sync::Arc::new(|| {})).err();
+    assert!(
+        matches!(&err, Some(AiError::Config(m)) if m.contains("refusing to send the API key over unencrypted http to example.invalid")),
+        "{err:?}"
+    );
+    let keyless = Config { api_key: String::new(), ..cfg };
+    assert!(crate::transport::start(&keyless, &json!({}), false, std::sync::Arc::new(|| {})).is_ok());
+}
+
+fn parse_sse(chunks: &[&str]) -> crate::Reply {
+    let mut p = crate::client::Parser::new();
+    for c in chunks {
+        p.feed(format!("data: {c}\n").as_bytes(), &mut |_| {}).unwrap();
+    }
+    p.feed(b"data: [DONE]\n", &mut |_| {}).unwrap();
+    p.finish(&mut |_| {}).unwrap()
+}
+
+#[test]
+fn streamed_tool_calls_without_index_keep_their_own_slots() {
+    let delta = |tc: Value| json!({"choices": [{"delta": {"tool_calls": [tc]}}]}).to_string();
+    let call = |id: &str, name: &str, args: &str| json!({"id": id, "function": {"name": name, "arguments": args}});
+    let cont = |id: &str, args: &str| json!({"id": id, "function": {"arguments": args}});
+    let r = parse_sse(&[
+        &delta(call("a", "one", "{\"x\":")),
+        &delta(call("b", "two", "{\"y\":")),
+        // Continuations interleaved, by id.
+        &delta(cont("a", "1}")),
+        &delta(cont("b", "2}")),
+    ]);
+    let got: Vec<_> = r.tool_calls.iter().map(|c| (c.id.as_str(), c.name.as_str(), c.arguments.as_str())).collect();
+    assert_eq!(got, [("a", "one", "{\"x\":1}"), ("b", "two", "{\"y\":2}")]);
+
+    // Separate chunks, id-less continuation fragments follow the latest call.
+    let r = parse_sse(&[
+        &delta(call("a", "one", "{\"x\"")),
+        &delta(json!({"function": {"arguments": ":1}"}})),
+        &delta(call("b", "two", "{\"y\"")),
+        &delta(json!({"function": {"arguments": ":2}"}})),
+    ]);
+    let got: Vec<_> = r.tool_calls.iter().map(|c| (c.name.as_str(), c.arguments.as_str())).collect();
+    assert_eq!(got, [("one", "{\"x\":1}"), ("two", "{\"y\":2}")]);
+}

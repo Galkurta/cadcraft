@@ -19,7 +19,7 @@ pub use agent::{Agent, Driver, Event, SYSTEM_PROMPT};
 pub use client::{AiError, Config, Image, Message, Reply, ToolCall, Vision, chat};
 pub use markup::recognize_image_markups;
 pub use tools::{call_tool, call_tool_with, tool_definitions};
-pub use transport::Wake;
+pub use transport::{Wake, insecure_key_host};
 
 use serde_json::Value;
 

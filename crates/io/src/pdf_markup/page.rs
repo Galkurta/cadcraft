@@ -561,7 +561,7 @@ impl<'a, 'p> Ctx<'a, 'p> {
                     return;
                 }
                 self.forms += 1;
-                let Some(data) = self.pdf.decode(&d, a, b, id) else { return };
+                let Some(data) = self.proc_stream(&o) else { return };
                 let mut st = gs.clone();
                 st.ctm = matrix(self.pdf.nums_of(&d, "Matrix")).post_concat(gs.ctm);
                 if let Some(bb) = self.pdf.nums_of(&d, "BBox").filter(|v| v.len() == 4)

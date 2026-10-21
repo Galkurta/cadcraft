@@ -220,6 +220,8 @@ pub(crate) struct Parser {
     buf: Vec<u8>,
     text: String,
     calls: std::collections::BTreeMap<usize, PartialCall>,
+    /// Slot of the latest tool call that came without an `index`.
+    last: Option<usize>,
     done: bool,
     /// Text was handed to `emit` while streaming.
     pub streamed: bool,
@@ -227,7 +229,7 @@ pub(crate) struct Parser {
 
 impl Parser {
     pub fn new() -> Self {
-        Parser { mode: Mode::Undecided, buf: Vec::new(), text: String::new(), calls: Default::default(), done: false, streamed: false }
+        Parser { mode: Mode::Undecided, buf: Vec::new(), text: String::new(), calls: Default::default(), last: None, done: false, streamed: false }
     }
 
     /// Feed received bytes; `emit` gets each piece of answer text as soon as it is complete.
@@ -283,10 +285,26 @@ impl Parser {
             self.streamed = true;
             emit(t);
         }
-        for (i, c) in delta["tool_calls"].as_array().into_iter().flatten().enumerate() {
-            let index = usize::try_from(c["index"].as_u64().unwrap_or(i as u64)).unwrap_or(usize::MAX);
+        for c in delta["tool_calls"].as_array().into_iter().flatten() {
+            let id = c["id"].as_str().filter(|s| !s.is_empty()).unwrap_or_default();
+            let named = c.pointer("/function/name").and_then(Value::as_str).is_some_and(|n| !n.is_empty());
+            let index = match c["index"].as_u64() {
+                Some(i) => usize::try_from(i).unwrap_or(usize::MAX),
+                // No index: a known id continues its call, a named call opens a new slot, a bare
+                // fragment continues the most recent index-less call.
+                None => match self.calls.iter().find(|(_, p)| !id.is_empty() && p.id == id).map(|(&i, _)| i) {
+                    Some(i) => i,
+                    None => match self.last.filter(|_| !named && id.is_empty()) {
+                        Some(i) => i,
+                        None => self.calls.keys().next_back().map_or(0, |k| k.saturating_add(1)),
+                    },
+                },
+            };
             if index >= MAX_CALLS {
                 return Err(AiError::Reply("too many tool calls in one answer".into()));
+            }
+            if c["index"].is_null() {
+                self.last = Some(index);
             }
             let call = self.calls.entry(index).or_default();
             if let Some(id) = c["id"].as_str().filter(|s| !s.is_empty()) {

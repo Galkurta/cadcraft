@@ -230,6 +230,25 @@ fn hostile_input_never_panics() {
 }
 
 #[test]
+fn chained_object_streams_do_not_recurse() {
+    // Object k lives in "object stream" k+1, itself in k+2, ...: 200000 deep if followed.
+    let n = 200_000u32;
+    let mut raw = vec![0u8; 6];
+    for k in 1..=n {
+        raw.push(2);
+        raw.extend((k + 1).to_be_bytes());
+        raw.push(0);
+    }
+    let mut f = b"%PDF-1.5\n".to_vec();
+    let off = f.len();
+    f.extend(format!("1000000 0 obj\n<< /Type /XRef /Size {} /W [1 4 1] /Root 1 0 R /Length {} >>\nstream\n", n + 1, raw.len()).bytes());
+    f.extend(&raw);
+    f.extend(format!("\nendstream\nendobj\nstartxref\n{off}\n%%EOF\n").bytes());
+    assert!(pdf_markups(&f, 1).is_err());
+    assert!(super::pdf_page_content(&f, 1, "").is_err());
+}
+
+#[test]
 fn image_sizes() {
     let mut png = vec![0x89, b'P', b'N', b'G', 13, 10, 26, 10, 0, 0, 0, 13, b'I', b'H', b'D', b'R'];
     png.extend(640u32.to_be_bytes());

@@ -16,12 +16,10 @@ use crate::theme::Tokens;
 /// Suggested blocks shown.
 const SUGGESTED: usize = 5;
 
-/// BLOCKSPALETTE (any parameters) and Window ▸ Blocks open the palette.
-pub fn route(app: &mut CadApp, id: &str, params: &Value) -> Option<Result<Value, String>> {
-    match id {
-        "blockspalette" => {}
-        "ui.dialog.blocks" if params.is_null() => {}
-        _ => return None,
+/// BLOCKSPALETTE and Window ▸ Blocks (`ui.dialog.blocks`), with any parameters, open the palette.
+pub fn route(app: &mut CadApp, id: &str, _params: &Value) -> Option<Result<Value, String>> {
+    if !matches!(id, "blockspalette" | "ui.dialog.blocks") {
+        return None;
     }
     Some(crate::docking::open_floating(app, Panel::Blocks, 300.0))
 }

@@ -111,6 +111,25 @@ impl Drop for Sink {
     }
 }
 
+/// The host of an `http://` base URL when `key` would travel to it unencrypted: `None` for https,
+/// for loopback hosts (localhost, 127.0.0.0/8, ::1) and when no key is set. Userinfo, ports and
+/// IPv6 brackets are parsed away, so `127.0.0.1.evil.com` and `localhost@evil.com` count as remote.
+pub fn insecure_key_host(base_url: &str, key: &str) -> Option<String> {
+    let url = base_url.trim();
+    let rest = url.get(..7).filter(|s| s.eq_ignore_ascii_case("http://")).and_then(|_| url.get(7..))?;
+    if key.is_empty() {
+        return None;
+    }
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
+    let hostport = authority.rsplit('@').next().unwrap_or_default();
+    let host = match hostport.strip_prefix('[') {
+        Some(v6) => v6.split(']').next().unwrap_or_default(),
+        None => hostport.split(':').next().unwrap_or_default(),
+    };
+    let loopback = host.eq_ignore_ascii_case("localhost") || host.parse::<std::net::IpAddr>().is_ok_and(|ip| ip.is_loopback());
+    (!loopback).then(|| host.to_string())
+}
+
 /// POST `body` to `{base_url}/chat/completions`. Returns at once; poll the [`Flight`]. `stream`:
 /// the reply is an event stream, so a pause of [`DEFAULT_IDLE_MS`] means the server is stuck; a
 /// one-piece reply may legitimately take minutes and gets the whole-exchange timeout instead.
@@ -118,6 +137,10 @@ pub fn start(cfg: &Config, body: &Value, stream: bool, wake: Wake) -> Result<Fli
     let base = cfg.base_url.trim().trim_end_matches('/');
     if !(base.starts_with("http://") || base.starts_with("https://")) {
         return Err(AiError::Config(format!("the AI base URL `{base}` must start with http:// or https://")));
+    }
+    // The one place every request (native `ureq`, web `fetch`) passes through.
+    if let Some(host) = insecure_key_host(base, &cfg.api_key) {
+        return Err(AiError::Config(format!("refusing to send the API key over unencrypted http to {host}; use https or a loopback address")));
     }
     let shared = Arc::new(Mutex::new(Shared::default()));
     let sink = Sink { shared: shared.clone(), wake };

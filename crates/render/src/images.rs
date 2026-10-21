@@ -126,15 +126,28 @@ pub fn read_bytes(path: &str) -> Result<Arc<Vec<u8>>, String> {
     source(path).map(|(b, _)| b)
 }
 
+/// A stamp that changes when the bytes behind `path` do, without reading a file.
+fn stamp_of(path: &str) -> Result<Stamp, String> {
+    if let Some(b) = embedded().lock().map_err(|_| "the picture store is unavailable".to_string())?.get(path) {
+        return Ok(embedded_stamp(b));
+    }
+    file_checked(path)
+}
+
+fn embedded_stamp(b: &Arc<Vec<u8>>) -> Stamp {
+    Stamp { len: b.len() as u64, modified: Arc::as_ptr(b) as usize as u128 }
+}
+
 /// The bytes behind `path` and a stamp that changes when they do.
 fn source(path: &str) -> Result<(Arc<Vec<u8>>, Stamp), String> {
     if let Some(b) = embedded().lock().map_err(|_| "the picture store is unavailable".to_string())?.get(path) {
-        return Ok((b.clone(), Stamp { len: b.len() as u64, modified: Arc::as_ptr(b) as usize as u128 }));
+        return Ok((b.clone(), embedded_stamp(b)));
     }
     read_file(path)
 }
 
-fn read_file(_path: &str) -> Result<(Arc<Vec<u8>>, Stamp), String> {
+/// The stamp of the file at `_path`, once it passes the network and size checks.
+fn file_checked(_path: &str) -> Result<Stamp, String> {
     #[cfg(not(target_arch = "wasm32"))]
     {
         if refused(_path) {
@@ -144,11 +157,18 @@ fn read_file(_path: &str) -> Result<(Arc<Vec<u8>>, Stamp), String> {
         if stamp.len > MAX_FILE_BYTES {
             return Err(format!("{_path}: file too large"));
         }
-        let b = std::fs::read(_path).map_err(|e| format!("{_path}: {e}"))?;
-        Ok((Arc::new(b), stamp))
+        Ok(stamp)
     }
     #[cfg(target_arch = "wasm32")]
     Err(format!("{_path}: files are not available on the web; attach the picture's bytes"))
+}
+
+fn read_file(path: &str) -> Result<(Arc<Vec<u8>>, Stamp), String> {
+    let stamp = file_checked(path)?;
+    #[cfg(test)]
+    tests::note_read(path);
+    let b = std::fs::read(path).map_err(|e| format!("{path}: {e}"))?;
+    Ok((Arc::new(b), stamp))
 }
 
 /// The size in pixels of a PNG or JPEG, from its header, within [`MAX_PIXELS`].
@@ -205,19 +225,23 @@ fn cache() -> &'static Mutex<Cache> {
 
 /// The size of the picture: pixels for a raster image (`page` 0), points for a PDF page (1-based).
 pub fn natural_size(path: &str, page: u32) -> Result<(f64, f64), String> {
-    let (bytes, stamp) = source(path)?;
-    let mut c = cache().lock().map_err(|_| "the picture cache is unavailable".to_string())?;
-    if let Some((s, size)) = c.sizes.get(&(path.to_string(), page))
-        && *s == stamp
+    let stamp = stamp_of(path)?;
     {
-        return Ok(*size);
+        let c = cache().lock().map_err(|_| "the picture cache is unavailable".to_string())?;
+        if let Some((s, size)) = c.sizes.get(&(path.to_string(), page))
+            && *s == stamp
+        {
+            return Ok(*size);
+        }
     }
+    let (bytes, stamp) = source(path)?;
     let size = if page == 0 {
         let (w, h) = raster_dimensions(&bytes)?;
         (f64::from(w), f64::from(h))
     } else {
         (pdf()?.page_size)(&bytes, page)?
     };
+    let mut c = cache().lock().map_err(|_| "the picture cache is unavailable".to_string())?;
     if c.sizes.len() > 4096 {
         c.sizes.clear();
     }
@@ -229,7 +253,7 @@ pub fn natural_size(path: &str, page: u32) -> Result<(f64, f64), String> {
 /// long side near `want_px`, rounded up to a power of two within [`MIN_PAGE_PX`]..=[`MAX_PAGE_PX`]).
 pub fn load(path: &str, page: u32, want_px: u32) -> Result<Arc<Raster>, String> {
     let bucket = if page == 0 { 0 } else { want_px.max(1).next_power_of_two().clamp(MIN_PAGE_PX, MAX_PAGE_PX) };
-    let (bytes, stamp) = source(path)?;
+    let stamp = stamp_of(path)?;
     let key = (path.to_string(), page, bucket);
     {
         let mut c = cache().lock().map_err(|_| "the picture cache is unavailable".to_string())?;
@@ -247,6 +271,7 @@ pub fn load(path: &str, page: u32, want_px: u32) -> Result<Arc<Raster>, String> 
             return Err(why.clone());
         }
     }
+    let (bytes, stamp) = source(path)?;
     // Decoded outside the lock: a big picture doesn't stall the others.
     let decoded = if page == 0 {
         if is_pdf(&bytes) { Err(format!("{path}: a PDF is attached with PDFATTACH, not as an image")) } else { decode_raster(&bytes) }
@@ -319,4 +344,39 @@ pub fn png_data_uri(r: &Raster) -> Option<String> {
         }
     }
     Some(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    static READS: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+    pub(super) fn note_read(path: &str) {
+        if let Ok(mut r) = READS.lock() {
+            r.push(path.to_string());
+        }
+    }
+
+    fn reads(path: &str) -> usize {
+        READS.lock().map_or(0, |r| r.iter().filter(|p| p.as_str() == path).count())
+    }
+
+    #[test]
+    fn an_unchanged_file_is_not_read_again() {
+        let mut png = Vec::new();
+        let img = image::RgbaImage::new(2, 2);
+        assert!(img.write_to(&mut Cursor::new(&mut png), image::ImageFormat::Png).is_ok());
+        let file = std::env::temp_dir().join(format!("cadcraft-images-{}.png", std::process::id()));
+        assert!(std::fs::write(&file, &png).is_ok());
+        let path = file.to_string_lossy().into_owned();
+        assert!(load(&path, 0, 0).is_ok());
+        assert_eq!(reads(&path), 1);
+        assert!(load(&path, 0, 0).is_ok());
+        assert_eq!(natural_size(&path, 0), Ok((2.0, 2.0)));
+        assert_eq!(natural_size(&path, 0), Ok((2.0, 2.0)));
+        // natural_size reads once for its own cache; repeats don't read.
+        assert_eq!(reads(&path), 2);
+        let _ = std::fs::remove_file(&file);
+    }
 }

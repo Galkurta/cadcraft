@@ -492,6 +492,10 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
             if let Some(reason) = st.keys.warning().filter(|_| cfg!(not(target_arch = "wasm32"))) {
                 ui.label(RichText::new(crate::tf!("The credential store is unavailable ({reason}); the key is kept in your preferences file.", reason = reason)).color(t.warn).font(crate::theme::small()));
             }
+            let cfg = st.config();
+            if let Some(host) = cadcraft_ai::insecure_key_host(&cfg.base_url, &cfg.api_key) {
+                ui.label(RichText::new(crate::tf!("The API key will not be sent: {host} is reached over unencrypted http. Use https or a loopback address.", host = host)).color(t.warn).font(crate::theme::small()));
+            }
             ui.label(
                 RichText::new(crate::tl!("Empty fields use CADCRAFT_AI_BASE_URL, CADCRAFT_AI_MODEL, CADCRAFT_AI_KEY (or OPENAI_API_KEY) and CADCRAFT_AI_VISION. Any OpenAI-compatible endpoint works: Ollama, LM Studio, OpenAI, OpenRouter, vLLM. The API key is kept in your system's credential store; the rest is saved with your preferences on this computer, never in a drawing."))
                     .color(t.text_faint)

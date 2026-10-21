@@ -421,6 +421,34 @@ fn a_form_xobject_is_transformed_and_clipped_to_its_box() {
 }
 
 #[test]
+fn a_form_used_many_times_is_decoded_once() {
+    // Each decode counts against the inflate budget; the last use (green over black) must still draw.
+    let mut form = vec![b' '; 1 << 20];
+    form.extend(b"40 40 20 20 re f");
+    let f = pdf(
+        "/Resources << /XObject << /Fm1 5 0 R >> >>",
+        &format!("{}0 1 0 rg /Fm1 Do", "/Fm1 Do ".repeat(4999)),
+        vec![(5, flate("/Type /XObject /Subtype /Form /BBox [0 0 100 100]", &form))],
+    );
+    let r = draw(&f);
+    assert!(near(at(&r, 50.0, 50.0), [0, 255, 0], 4));
+}
+
+#[test]
+fn huge_font_numbers_do_not_overflow() {
+    let f = pdf(
+        "/Resources << /Font << /F1 5 0 R /F2 6 0 R >> >>",
+        "BT /F1 20 Tf (AB) Tj /F2 20 Tf <0001> Tj ET",
+        vec![
+            (5, b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /FirstChar 1e30 /Widths [500 500] >>".to_vec()),
+            (6, b"<< /Type /Font /Subtype /Type0 /BaseFont /Tiny /Encoding /Identity-H /DescendantFonts [7 0 R] >>".to_vec()),
+            (7, b"<< /Type /Font /Subtype /CIDFontType2 /BaseFont /Tiny /W [1e30 [1 2 3] 1e30 1e30 5] >>".to_vec()),
+        ],
+    );
+    let _ = draw(&f);
+}
+
+#[test]
 fn graphics_state_alpha_and_line_parameters() {
     let f = pdf("/Resources << /ExtGState << /G1 << /ca 0.5 /CA 0.5 /LW 10 /D [[4 4] 0] >> >> >>", "/G1 gs 0 g 10 10 80 80 re f", vec![]);
     let p = at(&draw(&f), 50.0, 50.0);

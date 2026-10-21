@@ -438,7 +438,13 @@ fn exec(op: Opc, st: &mut Vec<(f64, bool)>) -> Option<()> {
                 Mod => a.trunc() % b.trunc(),
                 _ => {
                     let (x, s) = (a as i64, b as i64);
-                    if s >= 0 { x.checked_shl(s.min(63) as u32).unwrap_or(0) as f64 } else { (x >> (-s).min(63)) as f64 }
+                    if s >= 64 {
+                        0.0
+                    } else if s >= 0 {
+                        x.wrapping_shl(s as u32) as f64
+                    } else {
+                        (x >> s.unsigned_abs().min(63)) as f64
+                    }
                 }
             };
             st.push(num(v));
@@ -534,6 +540,15 @@ mod tests {
         assert_eq!(calc("{ 1 2 3 3 1 roll }", &[0.0], 3), vec![3.0, 1.0, 2.0]);
         assert_eq!(calc("{ 90 sin 4 sqrt add }", &[0.0], 1), vec![3.0]);
         assert_eq!(calc("{ true not { 1 } { 2 } ifelse }", &[0.0], 1), vec![2.0]);
+    }
+
+    #[test]
+    fn huge_bitshifts_do_not_overflow() {
+        let big = "1000000000000000000000000000000";
+        assert_eq!(calc(&format!("{{ pop 1 -{big} bitshift }}"), &[0.0], 1), vec![0.0]);
+        assert_eq!(calc(&format!("{{ pop -1 -{big} bitshift }}"), &[0.0], 1), vec![-1.0]);
+        assert_eq!(calc(&format!("{{ pop 1 {big} bitshift }}"), &[0.0], 1), vec![0.0]);
+        assert_eq!(calc("{ pop 1 3 bitshift }", &[0.0], 1), vec![8.0]);
     }
 
     #[test]

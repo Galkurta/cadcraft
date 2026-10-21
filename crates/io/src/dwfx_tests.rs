@@ -181,3 +181,26 @@ fn deep_and_huge_inputs_do_not_panic() {
     );
     all(&package(&nan, false));
 }
+
+#[test]
+fn repeated_references_are_read_once() {
+    let docs = "<DocumentReference Source=\"/Documents/1/FixedDocument.fdoc\"/>".repeat(9_000);
+    let seq = format!("<FixedDocumentSequence {NS}>{docs}</FixedDocumentSequence>");
+    let pages = "<PageContent Source=\"Pages/1.fpage\"/>".repeat(9_000);
+    let doc = format!("<FixedDocument {NS}>{pages}</FixedDocument>");
+    let page = format!("<FixedPage {NS} Width=\"96\" Height=\"96\"/>");
+    let b = zip::build(
+        &[
+            ("[Content_Types].xml", b"<Types/>"),
+            ("FixedDocumentSequence.fdseq", seq.as_bytes()),
+            ("Documents/1/FixedDocument.fdoc", doc.as_bytes()),
+            ("Documents/1/Pages/1.fpage", page.as_bytes()),
+        ],
+        true,
+    );
+    let z = Zip::open(&b).unwrap();
+    let t = std::time::Instant::now();
+    assert_eq!(page_parts(&z).unwrap(), vec!["Documents/1/Pages/1.fpage".to_string()]);
+    assert_eq!(sheets(&z).unwrap().len(), 1);
+    assert!(t.elapsed().as_secs() < 5);
+}

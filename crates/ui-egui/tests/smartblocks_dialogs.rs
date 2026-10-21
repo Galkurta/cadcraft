@@ -285,6 +285,16 @@ fn breplace_dialog_cancel_changes_nothing_and_without_references_it_does_not_ope
 }
 
 #[test]
+fn ui_dialog_blocks_opens_the_palette_whatever_the_params() {
+    for params in [Value::Null, json!({})] {
+        let (mut app, _) = app_with_blocks();
+        app.run("ui.dialog.blocks", params).unwrap();
+        assert!(app.ui.docking.layout.contains(&Panel::Blocks));
+        assert_eq!(app.ui.dialog, None);
+    }
+}
+
+#[test]
 fn the_blocks_palette_suggests_blocks_for_the_selection_most_similar_first() {
     let (mut app, _) = app_with_blocks();
     // The selection: the shape again, turned and at another size (not a reference).

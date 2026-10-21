@@ -1420,3 +1420,4 @@
 	Drop the placements and recently used blocks learned in all drawings.	Скинути розміщення та нещодавно використані блоки, вивчені в усіх кресленнях.
 	Pick Base Point	Вказати базову точку
 	Forget Learned Placements	Забути вивчені розміщення
+	The API key will not be sent: {host} is reached over unencrypted http. Use https or a loopback address.	Ключ API не буде надіслано: {host} доступний через незашифрований http. Використайте https або адресу loopback.
