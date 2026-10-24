@@ -1062,9 +1062,15 @@ fn entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: bool, cx: &Ctx
         EntityKind::Image(i) => {
             // Every image has its IMAGEDEF (planned in `write`); the fallback never happens.
             let Some((def, reactor)) = cx.images.by_entity.get(&e.handle) else { return };
-            w.s(0, "IMAGE");
-            common(w, e, owner, paper, "AcDbRasterImage");
-            w.t.extend(crate::dxf_image::entity_tags(i, def, reactor));
+            if i.page > 0 {
+                w.s(0, "PDFUNDERLAY");
+                common(w, e, owner, paper, "AcDbUnderlayReference");
+                w.t.extend(crate::dxf_image::underlay_tags(i, def));
+            } else {
+                w.s(0, "IMAGE");
+                common(w, e, owner, paper, "AcDbRasterImage");
+                w.t.extend(crate::dxf_image::entity_tags(i, def, reactor));
+            }
         }
         EntityKind::Solid(s) | EntityKind::Trace(s) => {
             let solid = matches!(e.kind, EntityKind::Solid(_));
@@ -2043,11 +2049,15 @@ fn tags_for(d: &Drawing, version: Version, target: Version) -> Vec<Tag> {
     if every.iter().any(|e| matches!(e.kind, EntityKind::Wipeout(_))) {
         classes.push(("WIPEOUT", "AcDbWipeout", 127, true));
     }
-    if !cx.images.is_empty() {
+    if cx.images.has_images() {
         classes.push(("IMAGE", "AcDbRasterImage", 127, true));
         classes.push(("IMAGEDEF", "AcDbRasterImageDef", 0, false));
         classes.push(("IMAGEDEF_REACTOR", "AcDbRasterImageDefReactor", 1, false));
         classes.push(("RASTERVARIABLES", "AcDbRasterVariables", 0, false));
+    }
+    if cx.images.has_pdfs() {
+        classes.push(("PDFUNDERLAY", "AcDbPdfReference", 127, true));
+        classes.push(("PDFDEFINITION", "AcDbPdfDefinition", 0, false));
     }
     classes.push(("SCALE", "AcDbScale", 0, false));
     for (dxf_name, cpp, proxy, is_entity) in classes {
@@ -2440,11 +2450,15 @@ fn tags_for(d: &Drawing, version: Version, target: Version) -> Vec<Tag> {
     w.i(281, 1);
     w.s(3, "ACAD_GROUP");
     w.s(350, group_dict.clone());
-    if !cx.images.is_empty() {
+    if cx.images.has_images() {
         w.s(3, "ACAD_IMAGE_DICT");
         w.s(350, cx.images.dict.clone());
         w.s(3, "ACAD_IMAGE_VARS");
         w.s(350, cx.images.vars.clone());
+    }
+    if cx.images.has_pdfs() {
+        w.s(3, "ACAD_PDFDEFINITIONS");
+        w.s(350, cx.images.pdf_dict.clone());
     }
     w.s(3, "ACAD_LAYOUT");
     w.s(350, layout_dict.clone());
