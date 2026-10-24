@@ -1,6 +1,6 @@
 # Where CADCraft falls short of AutoCAD
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-24 · **Change:** minor (A2 closed: the in-app Assistant) · **Target:** Autodesk AutoCAD 2027
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-24 · **Change:** minor (A3 narrowed: Markup Import and Markup Assist) · **Target:** Autodesk AutoCAD 2027
 
 Every known shortfall, one row each, ranked within each section by user impact. This is the work
 list: agents pick from here (top of a section first), and remove or update a row in the same PR
@@ -143,12 +143,13 @@ Detail: [localization-parity.md](localization-parity.md).
 | # | Gap | Est. |
 |---|---|---|
 | A1 | Smart Blocks equivalents (placement suggestions, replace, detect and convert, search), using local open models | 25–50 + model licensing |
-| A3 | Markup Assist (import markups from PDFs/images) | 10–20 |
+| A3 | The markup paper: MARKUPIMPORT does not show the PDF page or image under the markups it imports (needs raster images and PDF underlays drawn on screen) | 4–8 |
 
 ## Revision history
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-24 | minor | MARKUPIMPORT imports a reviewer's markups as drawing objects on the MARKUP layer: the annotations of a PDF page (FreeText, Text, Square, Circle, Line, PolyLine, Polygon and cloud, Ink; encrypted, LZW/ASCII85/RunLength and damaged files read) or a marked-up PNG/JPG read by the Assistant's vision model (`markup_import` over MCP too); MARKUPASSIST converts them to MTEXT, multileaders, text and revision clouds: A3 narrowed to the markup paper |
 | 2026-10-24 | minor | The Assistant palette (Window ▸ Assistant): streaming chat over any OpenAI-compatible endpoint (Ollama, LM Studio, OpenAI, OpenRouter, vLLM) that draws and edits through the MCP tool set, now the shared `cadcraft-ai` crate; API key in the OS credential store; desktop and web: A2 closed |
 | 2026-10-22 | minor | APPLOAD typed or from Tools ▸ Load Application opens a `.lsp` file browser starting in the last-used folder (kept in the preferences); a picked file loads interactively like a typed name (routines that ask for input wait), the web says to drop the file (no file system), and the JSON form `{path}` reads the path as given and returns the commands the file defined, never opening a dialog (#1820): E1 narrowed |
 | 2026-10-16 | minor | ALIASEDIT typed or from Tools ▸ Customize opens the Command Aliases dialog (user aliases next to the built-in ones; Add, Edit, Remove; OK, Cancel, Apply), #1381: U12 and E5 narrowed |

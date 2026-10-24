@@ -120,7 +120,7 @@ numbers):
 | Grips | Hot grips with Space to cycle Stretch, Move, Rotate, Scale and Mirror |
 | Interface languages | English, Ukrainian (Українська), Brazilian Portuguese (Português (Brasil)), German (Deutsch), Spanish (Español), Czech (Čeština), Russian (Русский), French (Français), Simplified Chinese (简体中文, with an installed CJK font), Italian (Italiano), Korean (한국어, with an installed Hangul font), Swedish (Svenska), Arabic (العربية, with an installed Arabic font), Hungarian (Magyar) and Turkish (Türkçe), live switching and a remembered Auto/system-language choice; [details](docs/localization.md) |
 | Automation | MCP server, JSON control channel, `cadcraft-cli` (info, convert, run, commands, mcp) |
-| AI | Assistant palette (Window ▸ Assistant, desktop and web) that streams replies and draws and edits through the same tools as MCP, against any OpenAI-compatible endpoint (Ollama, LM Studio, OpenAI, OpenRouter, vLLM), key kept in the OS credential store |
+| AI | Assistant palette (Window ▸ Assistant, desktop and web) that streams replies and draws and edits through the same tools as MCP, against any OpenAI-compatible endpoint (Ollama, LM Studio, OpenAI, OpenRouter, vLLM), key kept in the OS credential store; MARKUPIMPORT of PDF annotations (encrypted files too) and of marked-up images (read by the vision model), and MARKUPASSIST to turn markups into drawing text, leaders and clouds |
 
 ## Quick start
 
@@ -233,8 +233,9 @@ rectangle, centred and scaled without distortion; `--view extents` or `--view cu
 either framing. To frame a selection set, `zoom {"mode":"object"}` after selecting.
 
 MCP tools include `command_line` (type at the prompt), `execute` (any command with JSON),
-`inspect_drawing`, `query_entities`, `render` (returns a PNG) and, when connected to the app,
-`screenshot` and `ui_click`. The same tools power the in-app Assistant (Window ▸ Assistant).
+`inspect_drawing`, `query_entities`, `render` (returns a PNG), `markup_import` (PDF annotations,
+or a marked-up image read by the vision model set in `CADCRAFT_AI_*`) and, when connected to the
+app, `screenshot` and `ui_click`. The same tools power the in-app Assistant (Window ▸ Assistant).
 The desktop app's JSON control channel is documented in
 [docs/control-protocol.md](docs/control-protocol.md).
 

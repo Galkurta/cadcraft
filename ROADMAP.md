@@ -2,7 +2,7 @@
 
 **Stage: pre-alpha** · next: alpha, ~2 points (38% → 40% ready for real work) and ~125–190 Opus 5.5 hours away (the four failing core workflows of the [alpha gate](docs/roadmap.md#alpha-gate))
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-24 · **Change:** minor (progress log: the in-app Assistant; AI features 20% → 38%; previously trivial: proxy objects keep their class through a save, #1812) · **Target:** Autodesk AutoCAD 2027
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-24 · **Change:** minor (progress log: Markup Import and Markup Assist; AI features 20% → 48%; previously trivial: proxy objects keep their class through a save, #1812) · **Target:** Autodesk AutoCAD 2027
 
 CADCraft targets full parity with AutoCAD (2D drafting first, then annotation, layouts and
 plotting, DWG, parametrics and 3D), plus what AutoCAD doesn't have: agent control over MCP, a
@@ -57,7 +57,7 @@ Hours are Opus 5.5 agent wall-clock hours, calibrated on this repo's own build: 
 | Stability | 35% | 30–50 | [gaps.md](docs/gaps.md#stability) |
 | Platforms | 75% | 15–25 | [gaps.md](docs/gaps.md#platforms) |
 | Ecosystem and automation | 10% | 120–200 | [gaps.md](docs/gaps.md#ecosystem-and-automation) |
-| AI features | 38% | 30–60 | [gaps.md](docs/gaps.md#ai-features) |
+| AI features | 48% | 24–48 | [gaps.md](docs/gaps.md#ai-features) |
 
 ## Features
 
@@ -119,6 +119,7 @@ Ranked; detail and the full beta checklist in [docs/roadmap.md](docs/roadmap.md)
 
 | Date | Entry |
 |---|---|
+| 2026-10-24 | AI features 38% → 48%: MARKUPIMPORT turns a reviewer's markups into drawing objects on the MARKUP layer: the annotations of a PDF page (our own reader: encryption, every common filter, damaged files) or, through the Assistant's vision model, a marked-up PNG/JPG; MARKUPASSIST converts them into MTEXT, multileaders, text and revision clouds. The markup paper under them waits for underlays. |
 | 2026-10-24 | AI features 20% → 38%: the Assistant palette (Window ▸ Assistant) chats with any OpenAI-compatible endpoint (Ollama, LM Studio, OpenAI, OpenRouter, vLLM), streams its reply, can be stopped at once, and draws and edits through the same tools as the MCP server (now in the shared `cadcraft-ai` crate); the API key lives in the OS credential store; desktop and web. Smart Blocks and Markup Assist remain. |
 | 2026-10-21 | DXF save keeps each proxy object's and proxy entity's class: its class number (group 91) is renumbered to the rewritten CLASSES instead of naming another class, so AutoCAD's visual styles in an R14 file no longer come back as SCALE or MLEADERSTYLE (#1812) |
 | 2026-10-14 | HATCHEDIT adds boundaries from internal points or closed objects and removes selected loops in the dialog, command line and JSON command; associative links and undo are covered by tests. |
@@ -137,6 +138,7 @@ Ranked; detail and the full beta checklist in [docs/roadmap.md](docs/roadmap.md)
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-24 | minor | AI features row and progress log: Markup Import and Markup Assist |
 | 2026-10-24 | minor | AI features row and progress log: the Assistant palette |
 | 2026-10-21 | trivial | Progress log: proxy objects keep their class through a save (#1812) |
 | 2026-10-14 | minor | Progress log: HATCHEDIT boundary add/remove |

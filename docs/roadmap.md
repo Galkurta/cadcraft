@@ -1,6 +1,6 @@
 # CADCraft roadmap detail
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-24 · **Change:** minor (AI features: the in-app Assistant) · **Target:** Autodesk AutoCAD 2027
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-24 · **Change:** minor (AI features: Assistant, Markup Import/Assist) · **Target:** Autodesk AutoCAD 2027
 
 Forward-looking plan: milestones with status, the current focus, and what comes next with
 estimates. The summary is [ROADMAP.md](../ROADMAP.md); the work items behind every line are in
@@ -88,7 +88,7 @@ agents that built each milestone, are in the progress log of [ROADMAP.md](../ROA
 | M12 | Automation: AutoLISP, SCRIPT, action recorder, sheet sets, Express Tools | ≈ 15% (MCP, CLI, control channel done) | 130–220 |
 | M13 | 1.0 polish: preferences, workspaces, localisation, accessibility, signed packages, docs | ≈ 15% (signed packages for every platform exist; themes done; string catalog with Ukrainian and German, live language switching, #36) | 110–170 |
 | — | Geometry precision (cross-cutting, see [geometry-parity.md](geometry-parity.md)) | ≈ 40% | 70–110 |
-| — | AI features | ≈ 38% (the in-app Assistant is done; Smart Blocks and Markup Assist remain) | 30–60 |
+| — | AI features | ≈ 48% (the Assistant and Markup Import/Assist are done; Smart Blocks and the markup paper remain) | 24–48 |
 | | **Remaining to full parity** | | **≈ 1,300–2,100** |
 
 Milestone rows overlap a little with the cross-cutting rows; the total is the dimension sum in
@@ -103,6 +103,7 @@ AutoLISP surface, AI features with openly licensed local models, and every remai
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-24 | minor | AI features row ≈ 38% → ≈ 48%: MARKUPIMPORT (PDF annotations, marked-up images read by the vision model) and MARKUPASSIST landed; the markup paper under the markups waits for underlays |
 | 2026-10-24 | minor | AI features row ≈ 0% → ≈ 38%: the Assistant palette landed (streaming chat over an OpenAI-compatible endpoint driving the MCP tool set); Smart Blocks and Markup Assist remain |
 | 2026-10-12 | minor | Block Editor for static blocks landed: "Use blocks" evidence updated; status and hours unchanged (REFEDIT and dynamic blocks remain) |
 | 2026-10-11 | minor | Alpha-gate evidence refreshed for merged work (#459, #525, #528, #160, #186, #564); statuses and hours unchanged |
