@@ -1068,6 +1068,7 @@ fn entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: bool, cx: &Ctx
                     match i.kind {
                         cadcraft_doc::UnderlayKind::Pdf => "PDFUNDERLAY",
                         cadcraft_doc::UnderlayKind::Dwf => "DWFUNDERLAY",
+                        cadcraft_doc::UnderlayKind::Dgn => "DGNUNDERLAY",
                     },
                 );
                 common(w, e, owner, paper, "AcDbUnderlayReference");
@@ -2069,6 +2070,10 @@ fn tags_for(d: &Drawing, version: Version, target: Version) -> Vec<Tag> {
         classes.push(("DWFUNDERLAY", "AcDbDwfReference", 127, true));
         classes.push(("DWFDEFINITION", "AcDbDwfDefinition", 0, false));
     }
+    if cx.images.has_kind(cadcraft_doc::UnderlayKind::Dgn) {
+        classes.push(("DGNUNDERLAY", "AcDbDgnReference", 127, true));
+        classes.push(("DGNDEFINITION", "AcDbDgnDefinition", 0, false));
+    }
     classes.push(("SCALE", "AcDbScale", 0, false));
     for (dxf_name, cpp, proxy, is_entity) in classes {
         w.s(0, "CLASS");
@@ -2473,6 +2478,10 @@ fn tags_for(d: &Drawing, version: Version, target: Version) -> Vec<Tag> {
     if cx.images.has_kind(cadcraft_doc::UnderlayKind::Dwf) {
         w.s(3, "ACAD_DWFDEFINITIONS");
         w.s(350, cx.images.dwf_dict.clone());
+    }
+    if cx.images.has_kind(cadcraft_doc::UnderlayKind::Dgn) {
+        w.s(3, "ACAD_DGNDEFINITIONS");
+        w.s(350, cx.images.dgn_dict.clone());
     }
     w.s(3, "ACAD_LAYOUT");
     w.s(350, layout_dict.clone());

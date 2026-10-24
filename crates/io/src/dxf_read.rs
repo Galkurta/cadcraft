@@ -510,10 +510,11 @@ fn entity_with_table_budget(kind: &str, tags: &[Tag], table_cells_left: &mut usi
         }
         // The file path comes from the IMAGEDEF object (`dxf_image::resolve`).
         "IMAGE" => EntityKind::Image(crate::dxf_image::read_entity(tags)),
-        // The file and page come from the PDFDEFINITION / DWFDEFINITION object
+        // The file and page come from the PDFDEFINITION / DWFDEFINITION / DGNDEFINITION object
         // (`dxf_image::resolve`).
         "PDFUNDERLAY" => EntityKind::Image(crate::dxf_image::read_underlay(tags, cadcraft_doc::UnderlayKind::Pdf)),
         "DWFUNDERLAY" => EntityKind::Image(crate::dxf_image::read_underlay(tags, cadcraft_doc::UnderlayKind::Dwf)),
+        "DGNUNDERLAY" => EntityKind::Image(crate::dxf_image::read_underlay(tags, cadcraft_doc::UnderlayKind::Dgn)),
         "TOLERANCE" => {
             let dir = t.p(11);
             let dir = if dir.xy().is_finite() && dir.xy().len() > 1e-12 { dir } else { Vec3::new(1.0, 0.0, 0.0) };

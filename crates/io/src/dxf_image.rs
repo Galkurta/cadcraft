@@ -4,12 +4,12 @@
 //! `ACAD_IMAGE_DICT` dictionary names. CADCraft keeps this data so images survive save and
 //! reopen; the pixels themselves are not loaded.
 //!
-//! Underlays share the model: a PDFUNDERLAY / DWFUNDERLAY entity (AcDbUnderlayReference:
-//! insertion point, scale, rotation, clip, contrast, fade and display flags) points to a
-//! PDFDEFINITION / DWFDEFINITION object (file and page or sheet name) listed in
-//! `ACAD_PDFDEFINITIONS` / `ACAD_DWFDEFINITIONS`. Both read and write as an [`Image`] with a page
-//! number and an [`UnderlayKind`] (`u` and `v` are one point's width and height vectors; a DWF
-//! sheet is named by [`Image::sheet`]).
+//! Underlays share the model: a PDFUNDERLAY / DWFUNDERLAY / DGNUNDERLAY entity
+//! (AcDbUnderlayReference: insertion point, scale, rotation, clip, contrast, fade and display
+//! flags) points to a PDFDEFINITION / DWFDEFINITION / DGNDEFINITION object (file and page or
+//! sheet name) listed in `ACAD_PDFDEFINITIONS` / `ACAD_DWFDEFINITIONS` / `ACAD_DGNDEFINITIONS`.
+//! All read and write as an [`Image`] with a page number and an [`UnderlayKind`] (`u` and `v` are
+//! one point's width and height vectors; a DWF sheet or DGN model is named by [`Image::sheet`]).
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -52,9 +52,18 @@ pub(crate) fn read_entity(tags: &[Tag]) -> Image {
     }
 }
 
-/// DXF underlay scale groups (41, 42, 43) count drawing units per *inch* of the page or sheet: 1
-/// shows it at its size in inches. The model keeps drawing units per point (1/72 inch).
+/// DXF underlay scale groups (41, 42, 43) count drawing units per *inch* of a PDF page or DWF
+/// sheet: 1 shows it at its size in inches. The model keeps drawing units per point (1/72 inch).
 const POINTS_PER_INCH: f64 = 72.0;
+
+/// How many model units (points) one unit of the scale groups of an underlay of `kind` covers. A
+/// DGN design is measured in master units (one per model unit), which the scale counts directly.
+fn model_units_per_scale(kind: UnderlayKind) -> f64 {
+    match kind {
+        UnderlayKind::Pdf | UnderlayKind::Dwf => POINTS_PER_INCH,
+        UnderlayKind::Dgn => 1.0,
+    }
+}
 
 /// Display flags of an underlay (group 280).
 const FLAG_CLIP: i64 = 1;
@@ -73,7 +82,8 @@ pub(crate) fn read_underlay(tags: &[Tag], kind: UnderlayKind) -> Image {
     let i = |c: i32| tags.iter().find(|t| t.code == c).map(Tag::i64);
     let pct = |c: i32, d: u8, max: i64| i(c).and_then(|v| u8::try_from(v.clamp(0, max)).ok()).unwrap_or(d);
     let (sin, cos) = f(50, 0.0).to_radians().sin_cos();
-    let (sx, sy) = (f(41, 1.0) / POINTS_PER_INCH, f(42, 1.0) / POINTS_PER_INCH);
+    let per = model_units_per_scale(kind);
+    let (sx, sy) = (f(41, 1.0) / per, f(42, 1.0) / per);
     let xs = tags.iter().filter(|t| t.code == 11).map(Tag::f64);
     let ys = tags.iter().filter(|t| t.code == 21).map(Tag::f64);
     let flags = i(280).unwrap_or(FLAG_SHOW);
@@ -128,7 +138,7 @@ struct Def {
     page: u32,
     /// An underlay definition's kind.
     kind: UnderlayKind,
-    /// A DWF sheet name (group 2 of the definition).
+    /// A DWF sheet or DGN model name (group 2 of the definition).
     sheet: String,
 }
 
@@ -155,7 +165,7 @@ pub(crate) fn resolve(secs: &[Section], d: &mut Drawing) {
     let mut refs: HashMap<Handle, String> = HashMap::new();
     for s in secs.iter().filter(|s| s.name == "ENTITIES" || s.name == "BLOCKS") {
         each_record(&s.tags, |kind, tags| {
-            if !matches!(kind, "IMAGE" | "PDFUNDERLAY" | "DWFUNDERLAY") {
+            if !matches!(kind, "IMAGE" | "PDFUNDERLAY" | "DWFUNDERLAY" | "DGNUNDERLAY") {
                 return;
             }
             let h = tags.iter().find(|t| t.code == 5).and_then(|t| Handle::parse_hex(&t.str()));
@@ -183,7 +193,7 @@ pub(crate) fn resolve(secs: &[Section], d: &mut Drawing) {
                 let path = body.iter().find(|t| t.code == 1).map(Tag::str).unwrap_or_default();
                 defs.insert(h, Def { path, pixel_size: pixel, units, ..Def::default() });
             }
-            "PDFDEFINITION" | "DWFDEFINITION" => {
+            "PDFDEFINITION" | "DWFDEFINITION" | "DGNDEFINITION" => {
                 let Some(h) = tags.iter().find(|t| t.code == 5).map(|t| key(&t.str())) else { return };
                 let start = tags.iter().position(|t| t.code == 100 && t.str() == "AcDbUnderlayDefinition").unwrap_or(0);
                 let body = tags.get(start..).unwrap_or(&[]);
@@ -192,6 +202,7 @@ pub(crate) fn resolve(secs: &[Section], d: &mut Drawing) {
                 let text = text.trim();
                 let (kind, page, sheet) = match kind {
                     "DWFDEFINITION" => (UnderlayKind::Dwf, 1, text.to_string()),
+                    "DGNDEFINITION" => (UnderlayKind::Dgn, 1, text.to_string()),
                     _ => (UnderlayKind::Pdf, text.parse::<u32>().ok().filter(|p| *p >= 1).unwrap_or(1), String::new()),
                 };
                 defs.insert(h, Def { path, page, kind, sheet, ..Def::default() });
@@ -295,9 +306,10 @@ pub(crate) struct Plan {
     /// The `ACAD_IMAGE_DICT` dictionary and the `ACAD_IMAGE_VARS` RASTERVARIABLES object.
     pub dict: String,
     pub vars: String,
-    /// The `ACAD_PDFDEFINITIONS` and `ACAD_DWFDEFINITIONS` dictionaries.
+    /// The `ACAD_PDFDEFINITIONS`, `ACAD_DWFDEFINITIONS` and `ACAD_DGNDEFINITIONS` dictionaries.
     pub pdf_dict: String,
     pub dwf_dict: String,
+    pub dgn_dict: String,
 }
 
 impl Plan {
@@ -386,6 +398,9 @@ pub(crate) fn plan<'a>(entities: impl Iterator<Item = &'a cadcraft_doc::Entity>,
     if p.has_kind(UnderlayKind::Dwf) {
         p.dwf_dict = next();
     }
+    if p.has_kind(UnderlayKind::Dgn) {
+        p.dgn_dict = next();
+    }
     p
 }
 
@@ -418,10 +433,11 @@ pub(crate) fn entity_tags(i: &Image, def: &str, reactor: &str) -> Vec<Tag> {
     t
 }
 
-/// The PDFUNDERLAY / DWFUNDERLAY entity's groups after its common entity groups. The scale is
-/// written per inch of the page, as the format counts it ([`POINTS_PER_INCH`]).
+/// The underlay entity's groups after its common entity groups. The scale is written the way the
+/// format counts it ([`model_units_per_scale`]).
 pub(crate) fn underlay_tags(i: &Image, def: &str) -> Vec<Tag> {
-    let (sx, sy) = (i.u.xy().len() * POINTS_PER_INCH, i.v.xy().len() * POINTS_PER_INCH);
+    let per = model_units_per_scale(i.kind);
+    let (sx, sy) = (i.u.xy().len() * per, i.v.xy().len() * per);
     let rotation = i.u.y.atan2(i.u.x).to_degrees();
     let mut t = vec![Tag::s(340, def)];
     p3(&mut t, 10, i.insert);
@@ -467,7 +483,11 @@ pub(crate) fn objects(p: &Plan, root: &str) -> Vec<Tag> {
         t.extend([Tag::s(0, "RASTERVARIABLES"), Tag::s(5, &p.vars), Tag::s(102, "{ACAD_REACTORS"), Tag::s(330, root), Tag::s(102, "}")]);
         t.extend([Tag::s(330, root), Tag::s(100, "AcDbRasterVariables"), Tag::i(90, 0), Tag::i(70, 1), Tag::i(71, 1), Tag::i(72, 0)]);
     }
-    let kinds = [(UnderlayKind::Pdf, "PDFDEFINITION", &p.pdf_dict), (UnderlayKind::Dwf, "DWFDEFINITION", &p.dwf_dict)];
+    let kinds = [
+        (UnderlayKind::Pdf, "PDFDEFINITION", &p.pdf_dict),
+        (UnderlayKind::Dwf, "DWFDEFINITION", &p.dwf_dict),
+        (UnderlayKind::Dgn, "DGNDEFINITION", &p.dgn_dict),
+    ];
     for (kind, object, dict) in kinds {
         if !p.has_kind(kind) {
             continue;
@@ -480,13 +500,14 @@ pub(crate) fn objects(p: &Plan, root: &str) -> Vec<Tag> {
         for d in defs() {
             t.extend([Tag::s(0, object), Tag::s(5, &d.handle), Tag::s(102, "{ACAD_REACTORS"), Tag::s(330, dict)]);
             t.extend([Tag::s(102, "}"), Tag::s(330, dict), Tag::s(100, "AcDbUnderlayDefinition"), Tag::s(1, &d.path)]);
-            // A PDF page is a number, a DWF sheet a name (the page number when it has none).
+            // A PDF page is a number, a DWF sheet or DGN model a name (the page number when it has none).
             t.push(Tag::s(
                 2,
                 match kind {
                     UnderlayKind::Pdf => d.page.to_string(),
                     UnderlayKind::Dwf if d.sheet.trim().is_empty() => d.page.to_string(),
-                    UnderlayKind::Dwf => d.sheet.clone(),
+                    UnderlayKind::Dgn if d.sheet.trim().is_empty() => "Default".to_string(),
+                    UnderlayKind::Dwf | UnderlayKind::Dgn => d.sheet.clone(),
                 },
             ));
         }

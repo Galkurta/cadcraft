@@ -885,8 +885,8 @@ pub struct Image {
     /// What the underlay file is (only meaningful when `page` is 1 or more).
     #[serde(default, skip_serializing_if = "UnderlayKind::is_pdf")]
     pub kind: UnderlayKind,
-    /// The DWF sheet name (DXF group 2 of the definition); empty for a PDF, where `page` alone
-    /// names the page.
+    /// The DWF sheet or DGN model name (DXF group 2 of the definition); empty for a PDF, where
+    /// `page` alone names the page.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub sheet: String,
     /// An underlay's display flags (DXF group 280, bits 4, 8 and 16): shown in shades of gray,
@@ -907,6 +907,8 @@ pub enum UnderlayKind {
     Pdf,
     /// DWF 6 or DWFx (DXF `DWFUNDERLAY`).
     Dwf,
+    /// MicroStation DGN V7 (DXF `DGNUNDERLAY`).
+    Dgn,
 }
 impl UnderlayKind {
     pub fn is_pdf(&self) -> bool {
