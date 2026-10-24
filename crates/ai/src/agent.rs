@@ -8,7 +8,7 @@ use serde_json::Value;
 
 use crate::client::{Exchange, Options};
 use crate::transport::Wake;
-use crate::{AiError, Backend, Config, Image, Message, Reply, ToolCall, Vision, call_tool, tool_definitions};
+use crate::{AiError, Backend, Config, Image, Message, Reply, ToolCall, Vision, call_tool_with, tool_definitions};
 
 /// What the model is told about CADCraft. Ours.
 pub const SYSTEM_PROMPT: &str = "You are the CADCraft Assistant, built into a 2D/3D CAD drafting app. You change the open drawing \
@@ -95,7 +95,7 @@ impl Agent {
             "" => Ok(Value::Null),
             a => serde_json::from_str::<Value>(a).map_err(|e| format!("the arguments are not valid JSON: {e}")),
         };
-        match args.and_then(|a| call_tool(b, &call.name, &a)) {
+        match args.and_then(|a| call_tool_with(b, &self.config, &call.name, &a)) {
             Ok(r) => flatten(&r),
             Err(e) => (e, Vec::new(), true),
         }

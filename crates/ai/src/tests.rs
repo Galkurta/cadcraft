@@ -1,4 +1,4 @@
-//! The agent loop against a fake OpenAI-compatible server on loopback.
+//! The agent loop and image recognition against a fake OpenAI-compatible server on loopback.
 
 use std::io::{Read, Write};
 use std::net::TcpListener;
@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 use cadcraft_engine::Session;
 use serde_json::{Value, json};
 
-use crate::{Agent, AiError, Backend, Config, Event, Image, Message, Vision};
+use crate::{Agent, AiError, Backend, Config, Event, Image, Message, Vision, call_tool_with, recognize_image_markups};
 
 /// An engine session answering the few control methods these tests use.
 struct Sess(Session);
@@ -206,6 +206,66 @@ fn garbage_oversized_and_failing_endpoints_are_errors_not_panics() {
     assert!(matches!(events.as_slice(), [Event::Error(_)]), "{events:?}");
 }
 
+#[test]
+fn image_recognition_reads_the_models_json_and_drops_invalid_items() {
+    let answer = "```json\n[{\"kind\":\"text\",\"text\":\"widen door\",\"at\":[0.2,0.3],\"height\":0.02},{\"kind\":\"cloud\",\"points\":[[2,2],[3,3]]},{\"kind\":\"rect\",\"points\":[[0.1,0.1],[0.4,0.3]]}]\n```";
+    let (cfg, server) = serve(vec![reply(json!({"role": "assistant", "content": answer}))]);
+    let m = recognize_image_markups(&cfg, b"\x89PNG fake", "image/png").unwrap();
+    assert_eq!(m.len(), 2);
+    assert_eq!((m[0]["kind"].as_str(), m[1]["kind"].as_str()), (Some("text"), Some("rect")));
+    let req = &server.join().unwrap()[0];
+    assert!(req.contains("data:image/png;base64,"), "{req}");
+    let (cfg, _s) = serve(vec![reply(json!({"role": "assistant", "content": "I see a drawing."}))]);
+    assert!(matches!(recognize_image_markups(&cfg, b"x", "image/png"), Err(AiError::Reply(_))));
+}
+
+/// Records the engine calls it gets.
+struct Recorder(Vec<(String, Value)>);
+
+impl Backend for Recorder {
+    fn call(&mut self, method: &str, p: Value) -> Result<Value, String> {
+        self.0.push((method.into(), p));
+        Ok(json!({"count": 0}))
+    }
+    fn has_ui(&self) -> bool {
+        false
+    }
+    fn describe(&self) -> String {
+        String::new()
+    }
+}
+
+#[test]
+fn markup_import_sends_a_pdf_straight_on_and_reads_an_image_first() {
+    let dir = std::env::temp_dir().join(format!("cadcraft-ai-test-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let cfg = Config { base_url: "http://127.0.0.1:1/v1".into(), model: "m".into(), ..Config::default() };
+    let mut rec = Recorder(Vec::new());
+    let pdf = dir.join("review.pdf").to_string_lossy().to_string();
+    let r = call_tool_with(&mut rec, &cfg, "markup_import", &json!({"path": pdf, "page": 2, "at": [0, 0]})).unwrap();
+    assert!(r.get("isError").is_none(), "{r}");
+    assert_eq!(rec.0[0].0, "engine.execute");
+    assert_eq!(rec.0[0].1["command"], "markupimport");
+    assert_eq!(rec.0[0].1["params"]["page"], 2);
+    assert!(rec.0[0].1["params"].get("markups").is_none());
+
+    let png = dir.join("scan.png");
+    std::fs::write(&png, b"\x89PNG fake").unwrap();
+    let answer = r#"[{"kind":"polyline","points":[[0.1,0.1],[0.5,0.5]]}]"#;
+    let (cfg, server) = serve(vec![reply(json!({"role": "assistant", "content": answer}))]);
+    let r = call_tool_with(&mut rec, &cfg, "markup_import", &json!({"path": png.to_string_lossy(), "width": 100})).unwrap();
+    assert!(r.get("isError").is_none(), "{r}");
+    assert_eq!(rec.0[1].1["params"]["markups"][0]["kind"], "polyline");
+    server.join().unwrap();
+
+    // A missing image or an unreachable endpoint is a tool error, and nothing reaches the engine.
+    let n = rec.0.len();
+    let r = call_tool_with(&mut rec, &cfg, "markup_import", &json!({"path": dir.join("gone.png").to_string_lossy()})).unwrap();
+    assert_eq!(r["isError"], true);
+    assert_eq!(rec.0.len(), n);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 fn sse(deltas: &[Value]) -> Vec<u8> {
     deltas
         .iter()
@@ -304,6 +364,9 @@ fn vision_off_sends_no_image_parts() {
     assert_eq!(text_of(&events), "ok");
     let req = &server.join().unwrap()[0];
     assert!(!req.contains("image_url") && !req.contains("QUJD") && req.contains("left out"), "{req}");
+    // Image recognition has nothing to work with.
+    let cfg = Config { vision: Vision::Off, ..Config::default() };
+    assert!(matches!(recognize_image_markups(&cfg, b"x", "image/png"), Err(AiError::Config(m)) if m.contains("vision")));
 }
 
 #[test]

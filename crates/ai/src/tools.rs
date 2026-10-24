@@ -2,7 +2,19 @@
 
 use serde_json::{Value, json};
 
-use crate::Backend;
+use crate::{Backend, Config};
+
+/// The images `markup_import` reads (extension → MIME type).
+fn image_mime(path: &str) -> Option<&'static str> {
+    match path.rsplit_once('.')?.1.to_ascii_lowercase().as_str() {
+        "png" => Some("image/png"),
+        "jpg" | "jpeg" => Some("image/jpeg"),
+        _ => None,
+    }
+}
+
+/// The largest image sent to the model.
+const MAX_IMAGE_BYTES: u64 = 8 << 20;
 
 /// The `tools/list` payload: one definition (name, description, input schema) per MCP tool,
 /// including the UI-only tools when `has_ui` says a window is available.
@@ -35,6 +47,9 @@ pub fn tool_definitions(has_ui: bool) -> Value {
         json!({"name": "open", "description": "Open a DXF or DWG file.", "inputSchema": {"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"]}}),
         json!({"name": "save", "description": "Save the drawing (DXF or DWG by extension). A .svg, .png or .pdf path exports instead: the drawing keeps its name and unsaved changes.", "inputSchema": {"type": "object", "properties": {"path": {"type": "string"}}}}),
         json!({"name": "cancel", "description": "Press Escape: cancel the running command (or clear the selection).", "inputSchema": {"type": "object", "properties": {}}}),
+        json!({"name": "markup_import", "description": "Import a reviewer's markup as drawing entities on the MARKUP layer: a PDF's annotations, or a PNG/JPG markup image that the vision model reads (needs the AI endpoint configured). `at` is the lower-left of the page in the drawing, `width` its width in drawing units, `page` the PDF page (default 1). Returns the new handles.",
+            "inputSchema": {"type": "object", "properties": {"path": {"type": "string"}, "at": {"type": "array", "items": {"type": "number"}, "minItems": 2, "maxItems": 2},
+                "width": {"type": "number", "minimum": 0}, "page": {"type": "integer", "minimum": 1}}, "required": ["path"]}}),
     ];
     if has_ui {
         tools.push(json!({"name": "screenshot", "description": "Screenshot the CADCraft window (PNG).", "inputSchema": {"type": "object", "properties": {"path": {"type": "string"}}}}));
@@ -109,9 +124,36 @@ fn command_matches(c: &Value, f: &str) -> bool {
         || c["aliases"].as_array().is_some_and(|a| a.iter().filter_map(Value::as_str).any(has))
 }
 
+/// `markup_import`: a PDF goes to the engine's MARKUPIMPORT as it is; a PNG/JPG is read by the
+/// vision model first and its markups handed to MARKUPIMPORT.
+fn markup_import(b: &mut dyn Backend, cfg: &Config, mut a: Value) -> Value {
+    let path = a.get("path").and_then(Value::as_str).unwrap_or_default().to_string();
+    if let Some(mime) = image_mime(&path) {
+        let read = std::fs::metadata(&path)
+            .map_err(|e| format!("{path}: {e}"))
+            .and_then(|m| if m.len() > MAX_IMAGE_BYTES { Err(format!("{path}: larger than {} MB", MAX_IMAGE_BYTES >> 20)) } else { Ok(()) })
+            .and_then(|()| std::fs::read(&path).map_err(|e| format!("{path}: {e}")));
+        let markups = read.and_then(|bytes| crate::recognize_image_markups(cfg, &bytes, mime).map_err(|e| e.to_string()));
+        match markups {
+            Ok(m) => a["markups"] = Value::Array(m),
+            Err(e) => return err_text(&e),
+        }
+    }
+    match b.call("engine.execute", json!({"command": "markupimport", "params": a})) {
+        Ok(v) => text(&v),
+        Err(e) => err_text(&e),
+    }
+}
+
+/// Run a tool, with the AI endpoint from the environment for the tools that need one
+/// (`markup_import` on an image). See [`call_tool_with`].
+pub fn call_tool(b: &mut dyn Backend, name: &str, args: &Value) -> Result<Value, String> {
+    call_tool_with(b, &Config::from_env(), name, args)
+}
+
 /// Run a tool. `Err` is a protocol error (unknown tool, or arguments that don't fit its input
 /// schema), answered with JSON-RPC invalid params; a failing tool is an `isError` result.
-pub fn call_tool(b: &mut dyn Backend, name: &str, args: &Value) -> Result<Value, String> {
+pub fn call_tool_with(b: &mut dyn Backend, cfg: &Config, name: &str, args: &Value) -> Result<Value, String> {
     let a = check_args(name, args)?;
     let r = match name {
         "command_line" => b.call("cmdline.input", a),
@@ -137,6 +179,7 @@ pub fn call_tool(b: &mut dyn Backend, name: &str, args: &Value) -> Result<Value,
         "screenshot" => b.call("ui.screenshot", a),
         "ui_inspect" => b.call("ui.inspect", json!({})),
         "ui_click" => b.call("ui.pointer", a),
+        "markup_import" => return Ok(markup_import(b, cfg, a)),
         "render" => {
             return Ok(match b.call("ui.render", a) {
                 Ok(v) => match v.get("pngBase64").and_then(Value::as_str) {

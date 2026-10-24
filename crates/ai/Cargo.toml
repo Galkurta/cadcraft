@@ -1,6 +1,6 @@
 [package]
 name = "cadcraft-ai"
-description = "CADCraft AI features: the tool set agents drive the app with, an OpenAI-compatible chat client and the Assistant's agent loop"
+description = "CADCraft AI features: the tool set agents drive the app with, an OpenAI-compatible chat client, the Assistant's agent loop and image-markup recognition"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
