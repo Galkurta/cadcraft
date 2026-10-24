@@ -2,7 +2,7 @@
 
 **Stage: pre-alpha** · next: alpha, ~2 points (38% → 40% ready for real work) and ~125–190 Opus 5.5 hours away (the four failing core workflows of the [alpha gate](docs/roadmap.md#alpha-gate))
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-24 · **Change:** minor (progress log: raster images, Markup Import/Assist; AI features 20% → 48%; previously trivial: proxy objects keep their class through a save, #1812) · **Target:** Autodesk AutoCAD 2027
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-24 · **Change:** minor (progress log: raster images, PDF underlays, Markup Import/Assist; AI features 20% → 48%; previously trivial: proxy objects keep their class through a save, #1812) · **Target:** Autodesk AutoCAD 2027
 
 CADCraft targets full parity with AutoCAD (2D drafting first, then annotation, layouts and
 plotting, DWG, parametrics and 3D), plus what AutoCAD doesn't have: agent control over MCP, a
@@ -119,6 +119,7 @@ Ranked; detail and the full beta checklist in [docs/roadmap.md](docs/roadmap.md)
 
 | Date | Entry |
 |---|---|
+| 2026-10-24 | PDFATTACH places a PDF page as an underlay (PDFUNDERLAY in DXF, with AutoCAD's scale in drawing units per inch and its display flags: monochrome, adjust for background, inverted clip) drawn from its paths, text, images, shadings, patterns and forms by our own page interpreter, on screen, in exports and in PDF plots. |
 | 2026-10-24 | ATTACH and IMAGEATTACH place PNG and JPEG raster images: IMAGE objects that keep the file path, with the pixels read (size-capped, cached, re-read when the file changes) and drawn on screen, in PNG and SVG exports and in PDF plots; clip, fade, object transparency and the IMAGEFRAME variable apply. |
 | 2026-10-24 | AI features 38% → 48%: MARKUPIMPORT turns a reviewer's markups into drawing objects on the MARKUP layer: the annotations of a PDF page (our own reader: encryption, every common filter, damaged files) or, through the Assistant's vision model, a marked-up PNG/JPG; MARKUPASSIST converts them into MTEXT, multileaders, text and revision clouds. The markup paper under them waits for underlays. |
 | 2026-10-24 | AI features 20% → 38%: the Assistant palette (Window ▸ Assistant) chats with any OpenAI-compatible endpoint (Ollama, LM Studio, OpenAI, OpenRouter, vLLM), streams its reply, can be stopped at once, and draws and edits through the same tools as the MCP server (now in the shared `cadcraft-ai` crate); the API key lives in the OS credential store; desktop and web. Smart Blocks and Markup Assist remain. |
@@ -139,6 +140,7 @@ Ranked; detail and the full beta checklist in [docs/roadmap.md](docs/roadmap.md)
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-24 | minor | Progress log: PDF underlays (PDFATTACH) |
 | 2026-10-24 | minor | Progress log: raster images (ATTACH, IMAGEATTACH) |
 | 2026-10-24 | minor | AI features row and progress log: Markup Import and Markup Assist |
 | 2026-10-24 | minor | AI features row and progress log: the Assistant palette |
