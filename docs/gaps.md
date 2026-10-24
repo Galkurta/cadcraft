@@ -1,6 +1,6 @@
 # Where CADCraft falls short of AutoCAD
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-24 · **Change:** minor (A3 narrowed: Markup Import and Markup Assist; FF10 and FF11 narrowed by raster image attach and PDF and DWF underlays) · **Target:** Autodesk AutoCAD 2027
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-24 · **Change:** minor (A3 narrowed: Markup Import and Markup Assist; FF10 and FF11 narrowed by raster image attach and PDF, DWF and DGN underlays) · **Target:** Autodesk AutoCAD 2027
 
 Every known shortfall, one row each, ranked within each section by user impact. This is the work
 list: agents pick from here (top of a section first), and remove or update a row in the same PR
@@ -83,7 +83,7 @@ Detail: [file-format-parity.md](file-format-parity.md).
 | FF8 | SHX fonts (shape and big fonts) not read | Medium-high (text metrics differ) | 8–12 |
 | FF9 | `.pc3` plotter configuration files; linetype shape (SHX) elements are skipped (templates and `.dwt`, user `.lin`/`.pat` and `.pgp` alias files landed, #552; `.ctb`/`.stb`, #410) | Low-medium | 5–10 |
 | FF10 | PDF import (PDFIMPORT) to editable geometry. PDFATTACH underlays draw paths, text (embedded TrueType/OpenType/CFF/Type 1, other fonts with our own), images, shadings, tiling patterns and forms; JPX, JBIG2 and CCITT images, mesh shadings, soft masks and blend modes aren't drawn, and adjust-for-background is kept but not applied. IMAGEATTACH reads PNG and JPEG only (no TIFF, BMP). PDF export has real text in embedded TrueType subsets, PDF layers, several sheets per file and hyperlinks (#567, #571) | Medium | 12–20 |
-| FF11 | DWF/DWFx export; DGN, WMF, EPS, ACIS/STL and other exchange formats. DWFATTACH (DWFx and DWF 6) underlays landed; their leftovers: DWFx opacity masks, DWF ASCII images and marker glyphs | Low-medium | 45–90 |
+| FF11 | DWF/DWFx export; DGN V8 (no public specification: refused with a message), DGN import/export; WMF, EPS, ACIS/STL and other exchange formats. DWFATTACH (DWFx and DWF 6) and DGNATTACH (V7) underlays landed; their leftovers: DWFx opacity masks, DWF ASCII images and marker glyphs, DGN V7 shared cells, B-splines, 3D solids, fonts and level symbology | Low-medium | 40–85 |
 | FF12 | DWG in the web build | Medium | 6–10 |
 | FF13 | R12 binary DXF, pre-R13 DWG | Low | 10–20 |
 | FF14 | SVG import leftovers (shapes, paths, groups and Inkscape layers landed, #636): no CSS classes (`<style>`), `use` references, fills and gradients, text or embedded images; rounded rectangle corners (`rx`/`ry`) are ignored. Opening such a file names what was left out (#627) | Low-medium | 2–4 |
@@ -149,6 +149,7 @@ Detail: [localization-parity.md](localization-parity.md).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-24 | minor | DGNATTACH places a DGN V7 design as an underlay drawn on screen, in exports and in plots; DGNUNDERLAY/DGNDEFINITION round trip; DGN V8 is refused (no public specification): FF11 narrowed |
 | 2026-10-24 | minor | DWFATTACH places a sheet of a DWFx (XPS pages) or DWF 6 (W2D) file as an underlay drawn on screen, in exports and in plots; DWFUNDERLAY/DWFDEFINITION round trip with the same scale (drawing units per inch of the sheet) and display flags as PDF underlays: FF11 narrowed |
 | 2026-10-24 | minor | PDFATTACH underlays draw a PDF page's paths, text, images, shadings, patterns and forms (own PDF page interpreter: fonts, colour spaces, functions, image filters) on screen, in exports and in plots; DXF PDFUNDERLAY/PDFDEFINITION round trip with AutoCAD's scale (drawing units per inch of the page) and display flags (monochrome, adjust for background, inverted clip): FF10 narrowed |
 | 2026-10-24 | minor | ATTACH and IMAGEATTACH place PNG and JPEG raster images (IMAGE objects, path kept, pixels read and cached on demand), drawn on screen (CPU and GPU canvas), in PNG and SVG exports and embedded in PDF plots, with clip, fade, object transparency and IMAGEFRAME: FF10 narrowed |

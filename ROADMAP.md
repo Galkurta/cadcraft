@@ -2,7 +2,7 @@
 
 **Stage: pre-alpha** · next: alpha, ~2 points (38% → 40% ready for real work) and ~125–190 Opus 5.5 hours away (the four failing core workflows of the [alpha gate](docs/roadmap.md#alpha-gate))
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-24 · **Change:** minor (progress log: raster images, PDF and DWF underlays, Markup Import/Assist; AI features 20% → 48%; previously trivial: proxy objects keep their class through a save, #1812) · **Target:** Autodesk AutoCAD 2027
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-24 · **Change:** minor (progress log: raster images, PDF, DWF and DGN underlays, Markup Import/Assist; AI features 20% → 48%; previously trivial: proxy objects keep their class through a save, #1812) · **Target:** Autodesk AutoCAD 2027
 
 CADCraft targets full parity with AutoCAD (2D drafting first, then annotation, layouts and
 plotting, DWG, parametrics and 3D), plus what AutoCAD doesn't have: agent control over MCP, a
@@ -119,6 +119,7 @@ Ranked; detail and the full beta checklist in [docs/roadmap.md](docs/roadmap.md)
 
 | Date | Entry |
 |---|---|
+| 2026-10-24 | DGNATTACH places a DGN V7 design (lines, shapes, arcs, ellipses, curves, text, cells, the file's colour table, level display) as an underlay; DGN V8 has no public specification and is refused with a message. |
 | 2026-10-24 | DWFATTACH places a sheet of a DWFx (XPS pages: paths, fills, gradients, text, pictures, clips) or DWF 6 (W2D) file as an underlay, drawn from its vector content on screen, in exports and in PDF plots; DWFUNDERLAY in DXF shares the PDF underlay's scale (drawing units per inch) and display flags. |
 | 2026-10-24 | PDFATTACH places a PDF page as an underlay (PDFUNDERLAY in DXF, with AutoCAD's scale in drawing units per inch and its display flags: monochrome, adjust for background, inverted clip) drawn from its paths, text, images, shadings, patterns and forms by our own page interpreter, on screen, in exports and in PDF plots. |
 | 2026-10-24 | ATTACH and IMAGEATTACH place PNG and JPEG raster images: IMAGE objects that keep the file path, with the pixels read (size-capped, cached, re-read when the file changes) and drawn on screen, in PNG and SVG exports and in PDF plots; clip, fade, object transparency and the IMAGEFRAME variable apply. |
@@ -141,6 +142,7 @@ Ranked; detail and the full beta checklist in [docs/roadmap.md](docs/roadmap.md)
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-24 | minor | Progress log: DGN underlays (DGNATTACH) |
 | 2026-10-24 | minor | Progress log: DWF underlays (DWFATTACH) |
 | 2026-10-24 | minor | Progress log: PDF underlays (PDFATTACH) |
 | 2026-10-24 | minor | Progress log: raster images (ATTACH, IMAGEATTACH) |
