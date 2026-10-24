@@ -9,6 +9,8 @@ use crate::CadApp;
 use crate::icons::{self, Icon};
 use crate::theme::Tokens;
 
+/// The Assistant palette.
+pub mod assistant;
 #[cfg(test)]
 mod layer_menu_tests;
 /// The hatch pattern picker.

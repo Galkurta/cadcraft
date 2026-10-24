@@ -12,6 +12,7 @@ pub enum Panel {
     Canvas,
     ToolSets,
     QuickCalc,
+    Assistant,
     Layers,
     Properties,
     #[serde(rename = "externalReferences")]
@@ -25,6 +26,7 @@ impl Panel {
             Self::Canvas => "canvas",
             Self::ToolSets => "toolSets",
             Self::QuickCalc => "quickCalc",
+            Self::Assistant => "assistant",
             Self::Layers => "layers",
             Self::Properties => "properties",
             Self::ExternalRefs => "externalReferences",
@@ -35,6 +37,7 @@ impl Panel {
             Self::Canvas => "Drawing",
             Self::ToolSets => "Tool Sets",
             Self::QuickCalc => "QuickCalc",
+            Self::Assistant => "Assistant",
             Self::Layers => "Layers",
             Self::Properties => "Properties",
             Self::ExternalRefs => "External References",
@@ -45,13 +48,14 @@ impl Panel {
             Self::Canvas => Zone::Right,
             Self::ToolSets => Zone::Left,
             Self::QuickCalc => Zone::Right,
+            Self::Assistant => Zone::Right,
             Self::Layers => Zone::Right,
             Self::Properties => Zone::Right,
             Self::ExternalRefs => Zone::Right,
         }
     }
-    /// Palettes outside the default arrangement, opened on request (QUICKCALC).
-    pub const ON_DEMAND: &[Self] = &[Self::QuickCalc];
+    /// Palettes outside the default arrangement, opened on request (QUICKCALC, ASSISTANTOPEN).
+    pub const ON_DEMAND: &[Self] = &[Self::QuickCalc, Self::Assistant];
     fn parse(id: &str) -> Result<Self, String> {
         Self::ALL.iter().chain(Self::ON_DEMAND).copied().find(|panel| panel.id() == id).ok_or_else(|| format!("Unknown panel: {id}"))
     }
@@ -350,6 +354,7 @@ pub fn show(app: &mut crate::CadApp, ui: &mut egui::Ui) {
             }
             Panel::ToolSets => crate::palettes::toolsets(app, ui),
             Panel::QuickCalc => crate::palettes::quickcalc::show(app, ui),
+            Panel::Assistant => crate::palettes::assistant::show(app, ui),
             Panel::Layers => {
                 egui::ScrollArea::vertical()
                     .id_salt("dock-layers")
@@ -392,8 +397,22 @@ fn panel_limits(panel: &Panel) -> PanelLimits {
     let (min, max_width) = match panel {
         Panel::Canvas => (egui::vec2(300.0, 180.0), 1_000_000.0),
         Panel::QuickCalc => (egui::vec2(240.0, 160.0), 600.0),
+        Panel::Assistant => (egui::vec2(260.0, 220.0), 700.0),
         Panel::ToolSets => (egui::vec2(220.0, 150.0), 480.0),
         Panel::Layers | Panel::Properties | Panel::ExternalRefs => (egui::vec2(220.0, 100.0), 720.0),
     };
     PanelLimits { min, max: egui::vec2(max_width, 1_000_000.0) }
+}
+
+/// Open an on-demand palette. The first time it floats by the right edge of the drawing, `width`
+/// wide; afterwards it returns where it was closed.
+pub fn open_floating(app: &mut crate::CadApp, panel: Panel, width: f32) -> Result<Value, String> {
+    let first = !app.ui.docking.layout.contains(&panel) && !app.ui.docking.hidden.iter().any(|(p, _)| *p == panel);
+    let r = command(app, false, &json!({ "operation": "open", "panel": panel.id() }))?;
+    if !first {
+        return Ok(r);
+    }
+    let area = app.canvas.rect.unwrap_or(egui::Rect::from_min_size(egui::pos2(220.0, 80.0), egui::vec2(1000.0, 800.0)));
+    let h = (area.height() - 40.0).clamp(200.0, 560.0);
+    command(app, false, &json!({ "operation": "float", "panel": panel.id(), "rect": [area.right() - width - 16.0, area.top() + 24.0, width, h] }))
 }

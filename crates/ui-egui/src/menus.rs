@@ -29,6 +29,8 @@ pub const UI_COMMANDS: &[(&str, &str, &[&str], Option<&str>)] = &[
     ("ui.panel.layers", "Layers Palette", &["Window", "Layers Palette"], None),
     ("ui.toggle.quickcalc", "QuickCalc", &["Window", "QuickCalc"], Some("Cmd+8")),
     ("ui.panel.quickcalc", "QuickCalc", &[], None),
+    ("assistantopen", "Assistant", &["Window", "Assistant"], None),
+    ("assistantclose", "Close Assistant", &[], None),
     ("ui.toggle.systemcursor", "Show System Cursor", &["View", "Accessibility", "Show System Cursor"], None),
     ("ui.animations.system", "Use System Setting", &["View", "Accessibility", "Animation Effects", "Use System Setting"], None),
     ("ui.animations.on", "On", &["View", "Accessibility", "Animation Effects", "On"], None),
@@ -109,6 +111,9 @@ fn run_ui_command_inner(app: &mut CadApp, id: &str, params: &Value) -> Option<Re
     // Explicit opens remain idempotent; typed QUICKCALC with JSON parameters uses the engine's CAL alias.
     if id == "ui.panel.quickcalc" || (matches!(id, "quickcalc" | "qc") && params.is_null()) {
         return Some(crate::palettes::quickcalc::open(app));
+    }
+    if let Some(r) = crate::palettes::assistant::route(app, id) {
+        return Some(r);
     }
     if let Some(r) = crate::plotstyles::route(app, id, params) {
         return Some(r);
