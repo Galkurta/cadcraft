@@ -724,6 +724,8 @@ impl Session {
     }
     /// A session with no open drawing (the Start tab).
     pub fn empty() -> Self {
+        // PDF underlays: the picture cache reads PDF pages through the io crate.
+        cadcraft_io::register_image_decoders();
         Session {
             docs: Vec::new(),
             active: 0,

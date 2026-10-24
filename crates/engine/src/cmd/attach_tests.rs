@@ -30,6 +30,31 @@ fn pixel(s: &Session, x: u32, y: u32) -> [u8; 3] {
     [p.red(), p.green(), p.blue()]
 }
 
+/// A one-page PDF with a red square covering the left half of a 100 × 50 page, and a second page.
+fn pdf_bytes() -> Vec<u8> {
+    let content = "1 0 0 rg 0 0 50 50 re f";
+    let objs = [
+        "<< /Type /Catalog /Pages 2 0 R >>".to_string(),
+        "<< /Type /Pages /Kids [3 0 R 5 0 R] /Count 2 /MediaBox [0 0 100 50] >>".to_string(),
+        "<< /Type /Page /Parent 2 0 R /Contents 4 0 R >>".to_string(),
+        format!("<< /Length {} >>\nstream\n{content}\nendstream", content.len()),
+        "<< /Type /Page /Parent 2 0 R >>".to_string(),
+    ];
+    let mut f = b"%PDF-1.4\n".to_vec();
+    let mut offs = Vec::new();
+    for (i, o) in objs.iter().enumerate() {
+        offs.push(f.len());
+        f.extend(format!("{} 0 obj\n{o}\nendobj\n", i + 1).bytes());
+    }
+    let xref = f.len();
+    f.extend(format!("xref\n0 {}\n0000000000 65535 f \n", objs.len() + 1).bytes());
+    for o in offs {
+        f.extend(format!("{o:010} 00000 n \n").bytes());
+    }
+    f.extend(format!("trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n", objs.len() + 1).bytes());
+    f
+}
+
 /// A file of its own per call: the tests run in parallel.
 fn tmp(name: &str, bytes: &[u8]) -> String {
     static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
@@ -45,7 +70,7 @@ fn imageattach_places_the_picture_at_the_scale_and_rotation() {
     let r = s.execute("imageattach", &json!({"path": "mem:a.png", "data": png_b64(), "at": [10, 20], "width": 80, "layer": "PICS"})).unwrap();
     assert_eq!((r["width"].as_f64(), r["height"].as_f64(), &r["pixels"]), (Some(80.0), Some(40.0), &json!([2.0, 1.0])));
     let (layer, i) = images(&s).remove(0);
-    assert_eq!((layer.as_str(), i.path.as_str(), i.size), ("PICS", "mem:a.png", Vec2::new(2.0, 1.0)));
+    assert_eq!((layer.as_str(), i.path.as_str(), i.page, i.size), ("PICS", "mem:a.png", 0, Vec2::new(2.0, 1.0)));
     // 80 units over 2 pixels: 40 per pixel.
     assert_eq!((i.insert.x, i.insert.y, i.u.x, i.v.y), (10.0, 20.0, 40.0, 40.0));
     // Scale and a quarter turn.
@@ -121,6 +146,9 @@ fn oversized_and_corrupt_pictures_are_errors() {
     assert!(s.execute("imageattach", &json!({"path": junk})).is_err());
     let jpg = tmp("junk.jpg", b"\xFF\xD8\xFF\xE0 truncated");
     assert!(s.execute("attach", &json!({"path": jpg})).is_err());
+    let pdf = tmp("junk.pdf", b"%PDF-1.4 not really");
+    assert!(s.execute("pdfattach", &json!({"path": pdf})).is_err());
+    assert!(s.execute("pdfattach", &json!({"path": "mem:no.pdf", "data": "QUJD"})).is_err());
     assert!(images(&s).is_empty());
 }
 
@@ -129,19 +157,49 @@ fn cadcraft_engine_b64(b: &[u8]) -> String {
 }
 
 #[test]
-fn attach_picks_by_extension() {
+fn pdfattach_places_a_page_and_attach_picks_by_extension() {
     let mut s = Session::new();
+    let path = tmp("sheet.pdf", &pdf_bytes());
+    let r = s.execute("pdfattach", &json!({"path": path, "at": [0, 0], "width": 100})).unwrap();
+    assert_eq!((r["page"].as_u64(), r["pages"].as_u64(), r["width"].as_f64(), r["height"].as_f64()), (Some(1), Some(2), Some(100.0), Some(50.0)));
+    let (_, i) = images(&s).remove(0);
+    assert_eq!((i.page, i.size, i.u.x), (1, Vec2::new(100.0, 50.0), 1.0));
+    assert_eq!(pixel(&s, 25, 75), [255, 0, 0], "the page's red half");
+    assert_eq!(pixel(&s, 75, 75), [255, 255, 255], "paper");
+    // Page 2 exists (blank, 100 × 50 by inheritance); page 3 doesn't.
+    s.execute("pdfattach", &json!({"path": path, "page": 2, "scale": 2})).unwrap();
+    assert_eq!(images(&s)[1].1.page, 2);
+    for page in [json!(3), json!(0), json!(-1), json!("one"), json!(1.5)] {
+        assert!(s.execute("pdfattach", &json!({"path": path, "page": page})).is_err(), "{page}");
+    }
+    // ATTACH picks by extension.
+    s.execute("attach", &json!({"path": path})).unwrap();
+    assert_eq!(images(&s)[2].1.page, 1);
     let png = tmp("one.png", &crate::cmd::file::base64_decode(&png_b64()).unwrap());
-    let r = s.execute("attach", &json!({"path": png, "width": 10})).unwrap();
-    assert_eq!(r["width"].as_f64(), Some(10.0));
-    assert_eq!(images(&s).len(), 1);
+    s.execute("attach", &json!({"path": png})).unwrap();
+    assert_eq!(images(&s)[3].1.page, 0);
     let e = s.execute("attach", &json!({"path": "plan.dwg"})).unwrap_err().to_string();
     assert!(e.contains("XATTACH"), "{e}");
-    // A PDF isn't a picture this command reads.
-    let pdf = tmp("sheet.pdf", b"%PDF-1.4 not really");
-    assert!(s.execute("attach", &json!({"path": pdf})).is_err());
-    assert!(s.execute("imageattach", &json!({"path": pdf})).is_err());
-    assert_eq!(images(&s).len(), 1);
+    // A PDF isn't an image.
+    assert!(s.execute("imageattach", &json!({"path": path})).is_err());
+}
+
+#[test]
+fn a_pdf_underlay_scale_counts_drawing_units_per_inch_of_the_page() {
+    let mut s = Session::new();
+    let path = tmp("letter.pdf", &pdf_bytes());
+    // The page is 100 × 50 points: scale 1 is one drawing unit per inch, 100/72 units wide.
+    let r = s.execute("pdfattach", &json!({"path": path})).unwrap();
+    assert!((r["width"].as_f64().unwrap() - 100.0 / 72.0).abs() < 1e-9, "{r}");
+    let i = images(&s).remove(0).1;
+    assert!((i.u.x - 1.0 / 72.0).abs() < 1e-12 && (i.v.y - 1.0 / 72.0).abs() < 1e-12, "{:?} {:?}", i.u, i.v);
+    // Scale 72 is one unit per point (an AutoCAD drawing in points): the page is 100 units wide.
+    let r = s.execute("pdfattach", &json!({"path": path, "scale": 72})).unwrap();
+    assert!((r["width"].as_f64().unwrap() - 100.0).abs() < 1e-9, "{r}");
+    // A raster image's scale is still drawing units per pixel.
+    let png = tmp("px.png", &crate::cmd::file::base64_decode(&png_b64()).unwrap());
+    let r = s.execute("imageattach", &json!({"path": png, "scale": 3})).unwrap();
+    assert_eq!(r["width"].as_f64(), Some(6.0));
 }
 
 #[test]
@@ -169,7 +227,7 @@ fn the_interactive_form_prompts_for_file_point_scale_and_rotation() {
 #[test]
 fn hostile_attach_params_never_panic() {
     let mut s = Session::new();
-    for cmd in ["attach", "imageattach"] {
+    for cmd in ["attach", "imageattach", "pdfattach"] {
         for p in [
             Value::Null,
             json!(5),
