@@ -21,6 +21,10 @@ serde_json = { workspace = true }
 serde = { workspace = true }
 miniz_oxide = "0.9"
 quick-xml = { workspace = true }
+# The PDF markup reader decrypts the standard security handler (RC4 is hand-written in `crypt`).
+aes = "0.8"
+sha2 = "0.10"
+md-5 = "0.10"
 
 [dev-dependencies]
 # Reads CADCraft's DWG output as written (tests only; the same version as cadcraft-dwg's).
