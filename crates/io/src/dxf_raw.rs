@@ -35,6 +35,7 @@ const MODELLED_KEYS: &[&str] = &[
     "ACAD_IMAGE_DICT",
     "ACAD_IMAGE_VARS",
     "ACAD_PDFDEFINITIONS",
+    "ACAD_DWFDEFINITIONS",
 ];
 
 /// Extension dictionary entries not kept raw: dimension associativity (CADCraft reads and

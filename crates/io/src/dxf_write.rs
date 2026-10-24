@@ -1063,7 +1063,13 @@ fn entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: bool, cx: &Ctx
             // Every image has its IMAGEDEF (planned in `write`); the fallback never happens.
             let Some((def, reactor)) = cx.images.by_entity.get(&e.handle) else { return };
             if i.page > 0 {
-                w.s(0, "PDFUNDERLAY");
+                w.s(
+                    0,
+                    match i.kind {
+                        cadcraft_doc::UnderlayKind::Pdf => "PDFUNDERLAY",
+                        cadcraft_doc::UnderlayKind::Dwf => "DWFUNDERLAY",
+                    },
+                );
                 common(w, e, owner, paper, "AcDbUnderlayReference");
                 w.t.extend(crate::dxf_image::underlay_tags(i, def));
             } else {
@@ -2059,6 +2065,10 @@ fn tags_for(d: &Drawing, version: Version, target: Version) -> Vec<Tag> {
         classes.push(("PDFUNDERLAY", "AcDbPdfReference", 127, true));
         classes.push(("PDFDEFINITION", "AcDbPdfDefinition", 0, false));
     }
+    if cx.images.has_kind(cadcraft_doc::UnderlayKind::Dwf) {
+        classes.push(("DWFUNDERLAY", "AcDbDwfReference", 127, true));
+        classes.push(("DWFDEFINITION", "AcDbDwfDefinition", 0, false));
+    }
     classes.push(("SCALE", "AcDbScale", 0, false));
     for (dxf_name, cpp, proxy, is_entity) in classes {
         w.s(0, "CLASS");
@@ -2459,6 +2469,10 @@ fn tags_for(d: &Drawing, version: Version, target: Version) -> Vec<Tag> {
     if cx.images.has_pdfs() {
         w.s(3, "ACAD_PDFDEFINITIONS");
         w.s(350, cx.images.pdf_dict.clone());
+    }
+    if cx.images.has_kind(cadcraft_doc::UnderlayKind::Dwf) {
+        w.s(3, "ACAD_DWFDEFINITIONS");
+        w.s(350, cx.images.dwf_dict.clone());
     }
     w.s(3, "ACAD_LAYOUT");
     w.s(350, layout_dict.clone());
