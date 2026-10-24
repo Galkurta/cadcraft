@@ -882,6 +882,13 @@ pub struct Image {
     /// in points (0 until the file has been read).
     #[serde(default, skip_serializing_if = "is_zero_u32")]
     pub page: u32,
+    /// What the underlay file is (only meaningful when `page` is 1 or more).
+    #[serde(default, skip_serializing_if = "UnderlayKind::is_pdf")]
+    pub kind: UnderlayKind,
+    /// The DWF sheet name (DXF group 2 of the definition); empty for a PDF, where `page` alone
+    /// names the page.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub sheet: String,
     /// An underlay's display flags (DXF group 280, bits 4, 8 and 16): shown in shades of gray,
     /// colours adjusted for the background, and the clip boundary inverted (the underlay shows
     /// outside it instead of inside).
@@ -891,6 +898,20 @@ pub struct Image {
     pub adjust_for_background: bool,
     #[serde(default, skip_serializing_if = "is_false")]
     pub clip_inverted: bool,
+}
+/// The kind of file an underlay shows.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum UnderlayKind {
+    #[default]
+    Pdf,
+    /// DWF 6 or DWFx (DXF `DWFUNDERLAY`).
+    Dwf,
+}
+impl UnderlayKind {
+    pub fn is_pdf(&self) -> bool {
+        *self == UnderlayKind::Pdf
+    }
 }
 fn is_zero_u32(v: &u32) -> bool {
     *v == 0
@@ -925,6 +946,8 @@ impl Default for Image {
             pixel_size: image_pixel(),
             resolution_units: 0,
             page: 0,
+            kind: UnderlayKind::Pdf,
+            sheet: String::new(),
             monochrome: false,
             adjust_for_background: false,
             clip_inverted: false,
