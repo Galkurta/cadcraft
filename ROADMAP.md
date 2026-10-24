@@ -2,7 +2,7 @@
 
 **Stage: pre-alpha** · next: alpha, ~2 points (38% → 40% ready for real work) and ~125–190 Opus 5.5 hours away (the four failing core workflows of the [alpha gate](docs/roadmap.md#alpha-gate))
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-24 · **Change:** minor (progress log: raster images, PDF underlays, Markup Import/Assist; AI features 20% → 48%; previously trivial: proxy objects keep their class through a save, #1812) · **Target:** Autodesk AutoCAD 2027
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-24 · **Change:** minor (progress log: raster images, PDF underlays, Markup Import/Assist and its paper; AI features 20% → 55%; previously trivial: proxy objects keep their class through a save, #1812) · **Target:** Autodesk AutoCAD 2027
 
 CADCraft targets full parity with AutoCAD (2D drafting first, then annotation, layouts and
 plotting, DWG, parametrics and 3D), plus what AutoCAD doesn't have: agent control over MCP, a
@@ -57,7 +57,7 @@ Hours are Opus 5.5 agent wall-clock hours, calibrated on this repo's own build: 
 | Stability | 35% | 30–50 | [gaps.md](docs/gaps.md#stability) |
 | Platforms | 75% | 15–25 | [gaps.md](docs/gaps.md#platforms) |
 | Ecosystem and automation | 10% | 120–200 | [gaps.md](docs/gaps.md#ecosystem-and-automation) |
-| AI features | 48% | 24–48 | [gaps.md](docs/gaps.md#ai-features) |
+| AI features | 55% | 20–40 | [gaps.md](docs/gaps.md#ai-features) |
 
 ## Features
 
@@ -121,6 +121,7 @@ Ranked; detail and the full beta checklist in [docs/roadmap.md](docs/roadmap.md)
 |---|---|
 | 2026-10-24 | PDFATTACH places a PDF page as an underlay (PDFUNDERLAY in DXF, with AutoCAD's scale in drawing units per inch and its display flags: monochrome, adjust for background, inverted clip) drawn from its paths, text, images, shadings, patterns and forms by our own page interpreter, on screen, in exports and in PDF plots. |
 | 2026-10-24 | ATTACH and IMAGEATTACH place PNG and JPEG raster images: IMAGE objects that keep the file path, with the pixels read (size-capped, cached, re-read when the file changes) and drawn on screen, in PNG and SVG exports and in PDF plots; clip, fade, object transparency and the IMAGEFRAME variable apply. |
+| 2026-10-24 | AI features 48% → 55%: MARKUPIMPORT shows the PDF page or image it imports under the markups as markup paper (layer MARKUP-PAPER, `paper: false` skips it): MARKUPPAPERDISPLAY hides it and MARKUPPAPERTRANSPARENCY (0 to 90 %) fades it. |
 | 2026-10-24 | AI features 38% → 48%: MARKUPIMPORT turns a reviewer's markups into drawing objects on the MARKUP layer: the annotations of a PDF page (our own reader: encryption, every common filter, damaged files) or, through the Assistant's vision model, a marked-up PNG/JPG; MARKUPASSIST converts them into MTEXT, multileaders, text and revision clouds. The markup paper under them waits for underlays. |
 | 2026-10-24 | AI features 20% → 38%: the Assistant palette (Window ▸ Assistant) chats with any OpenAI-compatible endpoint (Ollama, LM Studio, OpenAI, OpenRouter, vLLM), streams its reply, can be stopped at once, and draws and edits through the same tools as the MCP server (now in the shared `cadcraft-ai` crate); the API key lives in the OS credential store; desktop and web. Smart Blocks and Markup Assist remain. |
 | 2026-10-21 | DXF save keeps each proxy object's and proxy entity's class: its class number (group 91) is renumbered to the rewritten CLASSES instead of naming another class, so AutoCAD's visual styles in an R14 file no longer come back as SCALE or MLEADERSTYLE (#1812) |
@@ -142,6 +143,7 @@ Ranked; detail and the full beta checklist in [docs/roadmap.md](docs/roadmap.md)
 |---|---|---|
 | 2026-10-24 | minor | Progress log: PDF underlays (PDFATTACH) |
 | 2026-10-24 | minor | Progress log: raster images (ATTACH, IMAGEATTACH) |
+| 2026-10-24 | minor | AI features row and progress log: the markup paper |
 | 2026-10-24 | minor | AI features row and progress log: Markup Import and Markup Assist |
 | 2026-10-24 | minor | AI features row and progress log: the Assistant palette |
 | 2026-10-21 | trivial | Progress log: proxy objects keep their class through a save (#1812) |
