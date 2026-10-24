@@ -23,6 +23,7 @@ mod inquiry;
 mod layer;
 mod layout;
 mod lisp;
+mod markup;
 mod mleader_content;
 mod mleader_edit;
 mod modify;
@@ -207,6 +208,7 @@ pub fn command_specs() -> &'static [CommandSpec] {
         v.extend(tolerance::specs());
         v.extend(txt2mtxt::specs());
         v.extend(attach::specs());
+        v.extend(markup::specs());
         v.extend(constraints::specs());
         v.extend(lisp::specs());
         v

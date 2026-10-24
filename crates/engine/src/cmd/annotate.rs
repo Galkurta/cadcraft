@@ -427,7 +427,7 @@ fn run_baseline(s: &mut Session, p: &Value) -> Result<Value> {
 mod qdim;
 
 /// A multileader from arrowhead to landing; `landing` false leaves out the landing line (dogleg).
-fn mleader_kind(s: &Session, pts: &[Vec2], text: &str, landing: bool) -> Option<EntityKind> {
+pub(crate) fn mleader_kind(s: &Session, pts: &[Vec2], text: &str, landing: bool) -> Option<EntityKind> {
     let (landing_pt, arrow_pts) = pts.split_last()?;
     let d = s.doc().ok()?;
     let cur = d.header.str("CMLEADERSTYLE", "Standard");

@@ -16,6 +16,8 @@ cadcraft-dxf = { workspace = true }
 cadcraft-constraints = { workspace = true }
 cadcraft-fonts = { workspace = true }
 cadcraft-render = { workspace = true }
+# MARKUPIMPORT reads PDF annotations through the io layer's parser (io is a lower layer).
+cadcraft-io = { workspace = true }
 craft-docpath = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -26,7 +28,3 @@ rstar = { version = "0.13", default-features = false }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
-
-[dev-dependencies]
-# Real DXF files for the external reference tests (io is a lower layer).
-cadcraft-io = { workspace = true }

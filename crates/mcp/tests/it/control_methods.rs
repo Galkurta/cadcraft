@@ -3,7 +3,8 @@
 
 use std::collections::BTreeSet;
 
-use cadcraft_mcp::{Backend, Headless};
+use cadcraft_ai::Backend;
+use cadcraft_mcp::Headless;
 use serde_json::json;
 
 fn documented() -> BTreeSet<String> {

@@ -1365,7 +1365,31 @@
 	Discard	Скасувати зміни
 	Customize	Налаштування інтерфейсу
 	Edit Command Aliases (PGP)...	Редагувати псевдоніми команд (PGP)...
+# Assistant palette.
+	Assistant	Асистент
+	Close Assistant	Закрити асистента
+	Send	Надіслати
+	Stop	Зупинити
+	Settings	Налаштування
+	Base URL	Базова URL-адреса
+	API key	Ключ API
+	Use environment	Використати змінні середовища
+	Empty fields use CADCRAFT_AI_BASE_URL, CADCRAFT_AI_MODEL, CADCRAFT_AI_KEY (or OPENAI_API_KEY) and CADCRAFT_AI_VISION. Any OpenAI-compatible endpoint works: Ollama, LM Studio, OpenAI, OpenRouter, vLLM. The API key is kept in your system's credential store; the rest is saved with your preferences on this computer, never in a drawing.	Порожні поля беруть значення з CADCRAFT_AI_BASE_URL, CADCRAFT_AI_MODEL, CADCRAFT_AI_KEY (або OPENAI_API_KEY) та CADCRAFT_AI_VISION. Підійде будь-яка OpenAI-сумісна кінцева точка: Ollama, LM Studio, OpenAI, OpenRouter, vLLM. Ключ API зберігається в системному сховищі облікових даних; решта — разом з вашими налаштуваннями на цьому комп'ютері, ніколи — у кресленні.
+	Ask the Assistant to draw or change something	Попросіть асистента щось накреслити або змінити
+	Stopped	Зупинено
+	Working…	Працюю…
+	Auto	Авто
+	Image input	Передавання зображень
+	Show more	Показати більше
+	Show less	Показати менше
+	The credential store is unavailable ({reason}); the key is kept in your preferences file.	Сховище облікових даних недоступне ({reason}); ключ зберігається у файлі налаштувань.
+	Image input: Auto sends images and stops sending them if the model refuses; Off never sends them (marked-up images can't be read then).	Передавання зображень: «Авто» надсилає зображення й припиняє, якщо модель їх відхиляє; «Вимкнено» не надсилає їх ніколи (тоді розпізнати зображення з позначками неможливо).
+	In the browser the endpoint must allow cross-origin requests (CORS) from this page; a local Ollama needs OLLAMA_ORIGINS set to this page's address. The key is saved with your preferences in this browser.	У браузері кінцева точка має дозволяти міждоменні запити (CORS) з цієї сторінки; локальній Ollama потрібно задати OLLAMA_ORIGINS з адресою цієї сторінки. Ключ зберігається разом з налаштуваннями в цьому браузері.
+# Smart Blocks and Markup Assist.
+	Markup Import	Імпорт розміток
+	Markup Assist	Помічник розміток
 # Attach, image and PDF underlay commands.
 	Attach...	Приєднати...
 	Attach Image	Приєднати зображення
 	Raster Image Reference...	Посилання на растрове зображення...
+	The API key will not be sent: {host} is reached over unencrypted http. Use https or a loopback address.	Ключ API не буде надіслано: {host} доступний через незашифрований http. Використайте https або адресу loopback.
