@@ -27,7 +27,7 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("attach", "Attach", run_attach)
             .menu(&["Insert", "Attach..."])
             .params(
-                "{path (a .png/.jpg/.jpeg raster image or a .pdf file; the extension picks IMAGEATTACH or PDFATTACH), …that command's other parameters} → as that command",
+                "{path (a .png/.jpg/.jpeg raster image, a .pdf or a .dwf/.dwfx file; the extension picks IMAGEATTACH, PDFATTACH or DWFATTACH), …that command's other parameters} → as that command",
             )
             .interactive(|_| Ok(Box::new(AttachM { kind: None, ..AttachM::default() }))),
         CommandSpec::new("imageattach", "Attach Image", run_image)
@@ -89,7 +89,8 @@ fn run_attach(s: &mut Session, p: &Value) -> Result<Value> {
     match ext.as_str() {
         "png" | "jpg" | "jpeg" => attach(s, "attach", p, false),
         "pdf" => attach(s, "attach", p, true),
-        _ => Err(bad("attach", "attaches PNG, JPEG and PDF files; use XATTACH for drawings")),
+        "dwf" | "dwfx" => super::attach_cad::run_dwf(s, p),
+        _ => Err(bad("attach", "attaches PNG, JPEG, PDF, DWF and DWFx files; use XATTACH for drawings")),
     }
 }
 
@@ -292,7 +293,13 @@ impl Interactive for AttachM {
                 if let Some(pg) = page {
                     p["page"] = json!(pg);
                 }
-                let r = if self.pdf() { run_pdf(s, &p) } else { run_image(s, &p) }?;
+                let r = if super::attach_cad::is_dwf(path) {
+                    super::attach_cad::run_dwf(s, &p)
+                } else if self.pdf() {
+                    run_pdf(s, &p)
+                } else {
+                    run_image(s, &p)
+                }?;
                 s.echo(format!(
                     "Attached {} ({} x {} drawing units).",
                     r["path"].as_str().unwrap_or(""),
