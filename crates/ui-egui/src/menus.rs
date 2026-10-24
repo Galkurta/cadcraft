@@ -112,7 +112,7 @@ fn run_ui_command_inner(app: &mut CadApp, id: &str, params: &Value) -> Option<Re
     if id == "ui.panel.quickcalc" || (matches!(id, "quickcalc" | "qc") && params.is_null()) {
         return Some(crate::palettes::quickcalc::open(app));
     }
-    if let Some(r) = crate::palettes::assistant::route(app, id) {
+    if let Some(r) = crate::palettes::assistant::route(app, id, params) {
         return Some(r);
     }
     if let Some(r) = crate::plotstyles::route(app, id, params) {

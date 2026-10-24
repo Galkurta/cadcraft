@@ -4,9 +4,12 @@
 //! on the UI thread through the control dispatcher ([`crate::control::handle`], exactly like a
 //! request from the control channel or MCP) and starts the next request. The request itself runs
 //! on a worker thread (native) or the browser's `fetch` (web), so the window never waits.
+//!
+//! Image markups (MARKUPIMPORT on a PNG/JPG) are read by the model on a worker thread.
 
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
+use std::sync::mpsc::{Receiver, channel};
 use std::time::Duration;
 
 use cadcraft_ai::keystore::ApiKey;
@@ -24,6 +27,8 @@ const MAX_LINES: usize = 500;
 const SHOW_CHARS: usize = 600;
 /// The one-line summary of a tool call is cut to this many characters.
 const BRIEF_CHARS: usize = 90;
+/// The first thing the status line says while an image is read.
+const READING: &str = "Reading the markups with the AI model";
 
 /// The endpoint settings. An empty field falls back to the environment
 /// (`CADCRAFT_AI_BASE_URL`, `CADCRAFT_AI_MODEL`, `CADCRAFT_AI_KEY` / `OPENAI_API_KEY`,
@@ -91,6 +96,12 @@ struct Run {
     driver: Driver,
 }
 
+/// An image being read for MARKUPIMPORT.
+struct MarkupJob {
+    path: String,
+    done: Receiver<Result<Vec<Value>, String>>,
+}
+
 pub struct State {
     pub settings: Settings,
     /// Where the API key lives. Tests put a fake store here.
@@ -105,6 +116,7 @@ pub struct State {
     run: Option<Run>,
     /// The endpoint refused images this session (survives Clear).
     no_vision: bool,
+    markup: Option<MarkupJob>,
     /// Lets worker threads wake the UI; set every frame by [`pump`].
     ctx: Option<egui::Context>,
 }
@@ -121,6 +133,7 @@ impl Default for State {
             agent: None,
             run: None,
             no_vision: false,
+            markup: None,
             ctx: None,
         }
     }
@@ -234,17 +247,65 @@ pub fn open(app: &mut CadApp) -> Result<Value, String> {
     crate::docking::open_floating(app, crate::docking::Panel::Assistant, 340.0)
 }
 
-/// `assistantopen` and `assistantclose`. `None` when `id` is not one.
-pub fn route(app: &mut CadApp, id: &str) -> Option<Result<Value, String>> {
+/// `assistantopen`, `assistantclose` and the UI side of `markupimport`. `None` when `id` is not one.
+pub fn route(app: &mut CadApp, id: &str, params: &Value) -> Option<Result<Value, String>> {
     match id {
         "assistantopen" => Some(open(app)),
         "assistantclose" => Some(crate::docking::command(app, false, &json!({"operation": "close", "panel": crate::docking::Panel::Assistant.id()}))),
+        // Typed or from a menu (no parameters): choose the file. JSON calls go to the command.
+        "markupimport" if params.is_null() && cfg!(not(target_arch = "wasm32")) => {
+            let pick = app.services.pick_open.as_ref()?;
+            let Some(path) = pick() else { return Some(Ok(Value::Null)) };
+            Some(import_markup(app, path))
+        }
         _ => None,
     }
 }
 
-/// Every frame: remember the context and advance the turn (collect the reply, run its tool calls,
-/// start the next request).
+fn is_image(path: &str) -> bool {
+    let p = path.to_ascii_lowercase();
+    [".png", ".jpg", ".jpeg"].iter().any(|e| p.ends_with(e))
+}
+
+/// MARKUPIMPORT of a file the user chose: a PDF at once; an image after the model has read it.
+fn import_markup(app: &mut CadApp, path: String) -> Result<Value, String> {
+    if !is_image(&path) {
+        return app.run("markupimport", json!({ "path": path }));
+    }
+    if app.assistant.markup.is_some() {
+        return Err("a markup image is already being read".into());
+    }
+    let ctx = app.assistant.ctx.clone();
+    let cfg = app.assistant.config();
+    let (tx, done) = channel();
+    let file = path.clone();
+    std::thread::Builder::new()
+        .name("markup-recognition".into())
+        .spawn(move || {
+            let result = read_image(&cfg, &file);
+            let _ = tx.send(result);
+            if let Some(ctx) = ctx {
+                ctx.request_repaint();
+            }
+        })
+        .map_err(|e| e.to_string())?;
+    app.assistant.markup = Some(MarkupJob { path, done });
+    app.set_status(format!("{}…", crate::i18n::t(READING)));
+    Ok(json!({"reading": true}))
+}
+
+fn read_image(cfg: &Config, path: &str) -> Result<Vec<Value>, String> {
+    let mime = if path.to_ascii_lowercase().ends_with(".png") { "image/png" } else { "image/jpeg" };
+    let len = std::fs::metadata(path).map_err(|e| format!("{path}: {e}"))?.len();
+    if len > 8 << 20 {
+        return Err(format!("{path}: larger than 8 MB"));
+    }
+    let bytes = std::fs::read(path).map_err(|e| format!("{path}: {e}"))?;
+    cadcraft_ai::recognize_image_markups(cfg, &bytes, mime).map_err(|e| e.to_string())
+}
+
+/// Every frame: remember the context, advance the turn (collect the reply, run its tool calls,
+/// start the next request) and collect the markup recognition that finished.
 pub fn pump(app: &mut CadApp, ctx: &egui::Context) {
     app.assistant.ctx = Some(ctx.clone());
     if let Some(mut run) = app.assistant.run.take() {
@@ -261,6 +322,31 @@ pub fn pump(app: &mut CadApp, ctx: &egui::Context) {
             app.assistant.no_vision |= agent.no_vision;
             app.assistant.agent = Some(agent);
             ctx.request_repaint();
+        }
+    }
+    if let Some(job) = app.assistant.markup.take() {
+        match job.done.try_recv() {
+            Ok(Ok(markups)) => {
+                let r = app.run("markupimport", json!({"path": job.path, "markups": markups}));
+                match r {
+                    Ok(v) => {
+                        let n = v.get("count").and_then(Value::as_u64).unwrap_or(0);
+                        app.set_status(format!("MARKUPIMPORT: {n} markups imported"));
+                    }
+                    Err(e) => app.set_status(e),
+                }
+            }
+            Ok(Err(e)) => {
+                app.session.echo(e.clone());
+                app.set_status(e);
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => {
+                // Keep the status line up while the model reads.
+                app.set_status(format!("{}…", crate::i18n::t(READING)));
+                app.assistant.markup = Some(job);
+                ctx.request_repaint_after(Duration::from_millis(250));
+            }
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => app.set_status("MARKUPIMPORT: reading the image failed"),
         }
     }
 }

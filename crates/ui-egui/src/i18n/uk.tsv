@@ -1385,5 +1385,8 @@
 	The credential store is unavailable ({reason}); the key is kept in your preferences file.	Сховище облікових даних недоступне ({reason}); ключ зберігається у файлі налаштувань.
 	Image input: Auto sends images and stops sending them if the model refuses; Off never sends them (marked-up images can't be read then).	Передавання зображень: «Авто» надсилає зображення й припиняє, якщо модель їх відхиляє; «Вимкнено» не надсилає їх ніколи (тоді розпізнати зображення з позначками неможливо).
 	In the browser the endpoint must allow cross-origin requests (CORS) from this page; a local Ollama needs OLLAMA_ORIGINS set to this page's address. The key is saved with your preferences in this browser.	У браузері кінцева точка має дозволяти міждоменні запити (CORS) з цієї сторінки; локальній Ollama потрібно задати OLLAMA_ORIGINS з адресою цієї сторінки. Ключ зберігається разом з налаштуваннями в цьому браузері.
+# Smart Blocks and Markup Assist.
+	Markup Import	Імпорт розміток
+	Markup Assist	Помічник розміток
 # Attach, image and PDF underlay commands.
 	The API key will not be sent: {host} is reached over unencrypted http. Use https or a loopback address.	Ключ API не буде надіслано: {host} доступний через незашифрований http. Використайте https або адресу loopback.
