@@ -153,7 +153,7 @@ fn attach(s: &mut Session, cmd: &str, p: &Value, pdf: bool) -> Result<Value> {
     let natural = images::natural_size(&stored, page).map_err(|e| bad(cmd, e))?;
     let unit = unit_scale(cmd, p, natural.0, if pdf { POINTS_PER_INCH } else { 1.0 })?;
     let Placement { at, rotation, layer } = placement(cmd, p)?;
-    let handle = place(s, &stored, page, natural, at, unit, rotation, layer.as_deref())?;
+    let handle = place(s, &stored, page, natural, at, unit, rotation, layer.as_deref(), false)?;
     let (w, h) = (natural.0 * unit, natural.1 * unit);
     let mut out = json!({ "handle": handle, "path": stored, "width": w, "height": h });
     if pdf {
@@ -172,7 +172,8 @@ fn page_count(path: &str) -> Option<usize> {
 }
 
 /// Add the IMAGE object of a picture, drawn at `unit` drawing units per pixel (point), turned by
-/// `rotation` degrees about `at`, and return its handle.
+/// `rotation` degrees about `at`, and return its handle. `paper` puts it on the markup-paper
+/// layer (see [`cadcraft_render::MARKUP_PAPER_LAYER`]), which is created gray when missing.
 pub(super) fn place(
     s: &mut Session,
     stored: &str,
@@ -182,6 +183,7 @@ pub(super) fn place(
     unit: f64,
     rotation: f64,
     layer: Option<&str>,
+    paper: bool,
 ) -> Result<String> {
     let (sin, cos) = rotation.to_radians().sin_cos();
     let image = Image {
@@ -196,7 +198,15 @@ pub(super) fn place(
     let space = s.space();
     let mut common: Common = s.current_common();
     let d = s.doc_mut()?;
-    if let Some(l) = layer {
+    if paper {
+        let name = cadcraft_render::MARKUP_PAPER_LAYER;
+        if d.ensure_layer(name)
+            && let Some(l) = d.layer_mut(name)
+        {
+            l.color = cadcraft_color::Color::Index(8);
+        }
+        common.layer = name.into();
+    } else if let Some(l) = layer {
         d.ensure_layer(l);
         common.layer = l.into();
     }

@@ -26,7 +26,7 @@ mod text;
 mod tolerance;
 pub mod units;
 mod wide;
-pub use picture::ImageDraw;
+pub use picture::{ImageDraw, MARKUP_PAPER_LAYER};
 
 use cadcraft_color::{Color, Rgb};
 use cadcraft_doc::{Drawing, Entity, EntityKind, Handle, Lineweight, Prim, Space};
@@ -1245,7 +1245,7 @@ fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
                 b.polyline(ctx, rgb, lw, &pts);
             }
         }
-        EntityKind::Image(i) => picture::draw(b, ctx, i, rgb, lw),
+        EntityKind::Image(i) => picture::draw(b, ctx, e, i, rgb, lw),
         EntityKind::Table(t) => table(b, ctx, t, rgb, lw),
         EntityKind::Tolerance(t) => tolerance::draw(b, ctx, e, t, lw, tol),
         EntityKind::Leader(l) => {

@@ -8,6 +8,10 @@ use cadcraft_geom::{Vec2, Vec3};
 
 use crate::{Builder, Ctx, DPrim, Ink, Kind};
 
+/// The layer markup papers (the PDF or image under imported markups) go on. MARKUPPAPERDISPLAY
+/// shows or hides every object on it, MARKUPPAPERTRANSPARENCY fades them.
+pub const MARKUP_PAPER_LAYER: &str = "MARKUP-PAPER";
+
 /// A PDF page whose size isn't known (file missing or unreadable), in points: ISO A4.
 const A4_PT: (f64, f64) = (595.276, 841.89);
 
@@ -91,8 +95,12 @@ fn clip_polygon(i: &Image, size: (f64, f64)) -> Option<Vec<Vec2>> {
     Some(pts)
 }
 
-pub(crate) fn draw(b: &mut Builder, ctx: &Ctx, i: &Image, rgb: Ink, lw: f32) {
+pub(crate) fn draw(b: &mut Builder, ctx: &Ctx, e: &cadcraft_doc::Entity, i: &Image, rgb: Ink, lw: f32) {
+    let paper = e.common.layer.eq_ignore_ascii_case(MARKUP_PAPER_LAYER);
     let h = &ctx.d.header;
+    if paper && h.i64("MARKUPPAPERDISPLAY", 1) == 0 {
+        return;
+    }
     let size = natural(i);
     let o = i.insert.xy();
     let (u, v) = (i.u.xy() * size.0, i.v.xy() * size.1);
@@ -122,7 +130,8 @@ pub(crate) fn draw(b: &mut Builder, ctx: &Ctx, i: &Image, rgb: Ink, lw: f32) {
         holes,
         missing,
     };
-    let transparency = if b.opts.transparency { b.transparency } else { 0 };
+    let own = if b.opts.transparency { b.transparency } else { 0 };
+    let transparency = if paper { own.max(u8::try_from(h.i64("MARKUPPAPERTRANSPARENCY", 0).clamp(0, 90)).unwrap_or(0)) } else { own };
     if !missing {
         b.image(ctx, rgb, transparency, &frame, draw);
     }

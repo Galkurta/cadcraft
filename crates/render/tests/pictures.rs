@@ -1,5 +1,5 @@
 //! Raster images in the display list and the CPU rasteriser: placement, clip, fade, transparency,
-//! missing and hostile files.
+//! the markup-paper sysvars, missing and hostile files.
 
 use std::io::Cursor;
 
@@ -7,7 +7,7 @@ use cadcraft_color::Rgb;
 use cadcraft_doc::{Common, Drawing, EntityKind, Image, Space};
 use cadcraft_geom::{Vec2, Vec3};
 use cadcraft_render::raster::{RasterOptions, View, render};
-use cadcraft_render::{DisplayList, Kind, Options, build, images};
+use cadcraft_render::{DisplayList, Kind, MARKUP_PAPER_LAYER, Options, build, images};
 
 /// A 2×1 PNG: red left, blue right.
 fn png() -> Vec<u8> {
@@ -112,6 +112,27 @@ fn object_transparency_blends_with_the_background() {
     assert!(p[0] == 255 && (120..140).contains(&p[1]), "{p:?}");
     // Without Options::transparency the image stays opaque.
     assert_eq!(pixel(&list(&d), 25, 50), [255, 0, 0]);
+}
+
+#[test]
+fn markup_paper_sysvars_hide_and_fade_only_the_paper_layer() {
+    images::put_bytes("test:paper.png", png()).unwrap();
+    let mut d = drawing(picture("test:paper.png"), MARKUP_PAPER_LAYER);
+    assert_eq!(pixel(&list(&d), 25, 50), [255, 0, 0], "shown and opaque by default");
+    d.header.set_i64("MARKUPPAPERTRANSPARENCY", 50);
+    let p = pixel(&list(&d), 25, 50);
+    assert!(p[0] == 255 && (120..140).contains(&p[1]), "{p:?}");
+    d.header.set_i64("MARKUPPAPERTRANSPARENCY", 500);
+    let p = pixel(&list(&d), 25, 50);
+    assert!((220..235).contains(&p[1]), "clamped to 90 %: {p:?}");
+    d.header.set_i64("MARKUPPAPERDISPLAY", 0);
+    let l = list(&d);
+    assert!(l.prims.is_empty(), "hidden: not even the frame");
+    // Another layer ignores both.
+    let mut other = drawing(picture("test:paper.png"), "0");
+    other.header.set_i64("MARKUPPAPERDISPLAY", 0);
+    other.header.set_i64("MARKUPPAPERTRANSPARENCY", 90);
+    assert_eq!(pixel(&list(&other), 25, 50), [255, 0, 0]);
 }
 
 #[test]

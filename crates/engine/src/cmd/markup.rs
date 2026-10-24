@@ -42,8 +42,10 @@ pub fn specs() -> Vec<CommandSpec> {
             .params(
                 "{path (PDF, or PNG/JPG with markups), page? (default 1), password? (the user password of an encrypted PDF), at? ([x, y] of the page's lower-left corner, default [0, 0]), \
                  width? (drawing width of the page; default the PDF page width in points, the image width in pixels), layer? (default \"MARKUP\"), \
+                 paper? (default true: the PDF page or image is attached under the markups, at the same `at`/`width`, on layer MARKUP-PAPER; \
+                 SETVAR MARKUPPAPERDISPLAY 0 hides every object on that layer, MARKUPPAPERTRANSPARENCY 0-90 fades them), \
                  markups? ([{kind: text|cloud|polyline|rect|ellipse|leader, …}] in normalized page coordinates, origin top left; required for images)} \
-                 → {handles, count, skipped}",
+                 → {handles, count, skipped, paper (the paper's handle, or null)}",
             )
             .interactive(|_| Ok(Box::new(ImportM::default()))),
         CommandSpec::new("markupassist", "Markup Assist", run_assist)
@@ -249,6 +251,13 @@ fn run_import(s: &mut Session, p: &Value) -> Result<Value> {
             Err(why) => skipped.push(format!("markup {}: {why}", i + 1)),
         }
     }
+    // The source under the markups (added first, so it is drawn first).
+    let paper = if bool_or(p, "paper", true) {
+        let page = if path.to_ascii_lowercase().ends_with(".pdf") { page_number(p) } else { 0 };
+        Some(super::attach::place(s, &super::attach::absolute(path), page, (pw, ph), at, dw / pw, 0.0, None, true)?)
+    } else {
+        None
+    };
     let space = s.space();
     let base = s.current_common();
     let d = s.doc_mut()?;
@@ -265,7 +274,12 @@ fn run_import(s: &mut Session, p: &Value) -> Result<Value> {
         common.xdata = tags(&kind, &text);
         handles.push(d.add(&space, common, k).map_err(|e| EngineError::Other(e.to_string()))?.hex());
     }
-    Ok(json!({ "handles": handles, "count": handles.len(), "skipped": skipped }))
+    Ok(json!({ "handles": handles, "count": handles.len(), "skipped": skipped, "paper": paper }))
+}
+
+/// The 1-based `page` parameter (already checked by [`page_markups`]).
+fn page_number(p: &Value) -> u32 {
+    p.get("page").and_then(Value::as_u64).and_then(|n| u32::try_from(n).ok()).filter(|n| *n >= 1).unwrap_or(1)
 }
 
 #[derive(Default)]
