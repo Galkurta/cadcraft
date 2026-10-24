@@ -1,4 +1,4 @@
-//! Underlays that are not PDFs (DWFx, DWF): each reader turns its file into a
+//! Underlays that are not PDFs (DWFx, DWF, DGN V7): each reader turns its file into a
 //! [`Scene`] (vector paths, gradients and pictures in points, y down, origin top left) and the
 //! scene is drawn with tiny-skia at the resolution the picture cache asks for. A PDF page goes
 //! through the same two entry points ([`page_size`], [`render`]), which the picture cache calls
@@ -21,6 +21,8 @@ use tiny_skia::{
 pub(crate) const MAX_OPS: usize = 2_000_000;
 /// Most clip regions kept in one scene.
 pub(crate) const MAX_CLIPS: usize = 8_192;
+
+pub(crate) const V8_ERROR: &str = "DGN V8 is not supported: no public specification";
 
 /// How a path is painted.
 #[derive(Clone)]
@@ -312,13 +314,37 @@ pub(crate) fn pixmap(r: &Raster) -> Option<Arc<Pixmap>> {
     Pixmap::from_vec(data, size).map(Arc::new)
 }
 
-/// What kind of underlay file `bytes` is.
+/// A path through `points` (closed when `close`); `None` for fewer than two distinct points.
+pub(crate) fn polyline(points: &[(f32, f32)], close: bool) -> Option<Path> {
+    let mut it = points.iter().filter(|p| p.0.is_finite() && p.1.is_finite());
+    let mut pb = PathBuilder::new();
+    let first = it.next()?;
+    pb.move_to(first.0, first.1);
+    let mut n = 0;
+    for p in it {
+        pb.line_to(p.0, p.1);
+        n += 1;
+    }
+    if n == 0 {
+        return None;
+    }
+    if close {
+        pb.close();
+    }
+    pb.finish()
+}
+
+/// What kind of underlay file `bytes` is; a DGN V8 file is the [`V8_ERROR`].
 pub fn kind(bytes: &[u8]) -> Result<cadcraft_doc::UnderlayKind, String> {
     use cadcraft_doc::UnderlayKind;
     if is_pdf(bytes) {
         Ok(UnderlayKind::Pdf)
     } else if crate::zip::is_zip(bytes) || crate::w2d::is_w2d(bytes) {
         Ok(UnderlayKind::Dwf)
+    } else if bytes.starts_with(&[0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1]) {
+        Err(V8_ERROR.into())
+    } else if crate::dgn::is_v7(bytes) {
+        Ok(UnderlayKind::Dgn)
     } else {
         Err("unrecognised underlay file".into())
     }
@@ -332,10 +358,16 @@ pub fn sheets(bytes: &[u8]) -> Result<Vec<String>, String> {
     if crate::w2d::is_w2d(bytes) {
         return Ok(vec!["Sheet 1".to_string()]);
     }
+    if bytes.starts_with(&[0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1]) {
+        return Err(V8_ERROR.into());
+    }
+    if crate::dgn::is_v7(bytes) {
+        return Ok(vec![crate::dgn::MODEL_NAME.to_string()]);
+    }
     Err("unrecognised underlay file".into())
 }
 
-/// The scene of sheet `page` (1-based) of a DWFx or DWF file.
+/// The scene of sheet `page` (1-based) of a DWFx, DWF or DGN file.
 fn scene(bytes: &[u8], page: u32) -> Result<Scene, String> {
     let index = usize::try_from(page).map_err(|_| "sheet number too large")?.checked_sub(1).ok_or("sheets are numbered from 1")?;
     if crate::zip::is_zip(bytes) {
@@ -344,6 +376,12 @@ fn scene(bytes: &[u8], page: u32) -> Result<Scene, String> {
     let one = |s: Result<Scene, String>| if index == 0 { s } else { Err(format!("the file has no sheet {page}")) };
     if crate::w2d::is_w2d(bytes) {
         return one(crate::w2d::scene(bytes));
+    }
+    if bytes.starts_with(&[0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1]) {
+        return Err(V8_ERROR.into());
+    }
+    if crate::dgn::is_v7(bytes) {
+        return one(crate::dgn::scene(bytes));
     }
     Err("unrecognised underlay file".into())
 }

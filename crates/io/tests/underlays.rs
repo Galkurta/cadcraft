@@ -1,6 +1,6 @@
-//! DWF underlays: the DXF round trip (DWFUNDERLAY with its definitions and dictionary), the
-//! scale and display flags it shares with PDF underlays, the pictures in raster, SVG and PDF
-//! output, and hostile input. The files are generated here; nothing is read from disk.
+//! DWF and DGN underlays: the DXF round trip (DWFUNDERLAY / DGNUNDERLAY with their definitions
+//! and dictionaries), the scale and display flags, the pictures in raster, SVG and PDF output,
+//! and hostile input. The files are generated here; nothing is read from disk.
 
 use cadcraft_color::Rgb;
 use cadcraft_doc::{Common, Drawing, EntityKind, Image, Space, UnderlayKind};
@@ -13,6 +13,31 @@ fn w2d() -> Vec<u8> {
     let mut b = b"(W2D V06.00)".to_vec();
     b.extend(b"(Bounds 0,0 1000,500)\n(Color 255,0,0,255)\n(LineWeight 30)\nL 0,0 1000,500\n(EndOfDWF)");
     b
+}
+
+/// A DGN V7 2D file: TCB and one red line of 100 × 50 master units.
+fn dgn() -> Vec<u8> {
+    let pdp = |v: i32| {
+        let b = v.to_le_bytes();
+        [b[2], b[3], b[0], b[1]]
+    };
+    let mut f = vec![0u8; 1536];
+    f[0] = 0x08;
+    f[1] = 0x09;
+    f[2..4].copy_from_slice(&766u16.to_le_bytes());
+    f[1112..1116].copy_from_slice(&pdp(10));
+    f[1116..1120].copy_from_slice(&pdp(100));
+    let mut line = vec![0u8; 52];
+    line[0] = 0x01;
+    line[1] = 0x03;
+    line[2..4].copy_from_slice(&24u16.to_le_bytes());
+    line[34..36].copy_from_slice(&((3u16 << 8) | (3 << 3)).to_le_bytes());
+    for (at, v) in [(36, 0), (40, 0), (44, 100_000), (48, 50_000)] {
+        line[at..at + 4].copy_from_slice(&pdp(v));
+    }
+    f.extend(line);
+    f.extend([0xFF, 0xFF]);
+    f
 }
 
 fn underlay(path: &str, kind: UnderlayKind, sheet: &str, w: f64, h: f64) -> Image {
@@ -39,22 +64,38 @@ fn images_of(d: &Drawing) -> Vec<Image> {
 }
 
 #[test]
-fn dwf_underlays_round_trip_through_dxf() {
+fn dwf_and_dgn_underlays_round_trip_through_dxf() {
     let mut d = Drawing::new_imperial();
-    for (path, kind, sheet, page) in [("D:/a/plan.dwf", UnderlayKind::Dwf, "Floor 1", 1), ("D:/a/plan.dwf", UnderlayKind::Dwf, "Floor 2", 2)] {
+    for (path, kind, sheet, page) in [
+        ("D:/a/plan.dwf", UnderlayKind::Dwf, "Floor 1", 1),
+        ("D:/a/plan.dwf", UnderlayKind::Dwf, "Floor 2", 2),
+        ("D:/a/site.dgn", UnderlayKind::Dgn, "Default", 1),
+    ] {
         let i = Image { page, insert: Vec3::new(3.0, 4.0, 0.0), ..underlay(path, kind, sheet, 800.0, 600.0) };
         d.add(&Space::Model, Common::default(), EntityKind::Image(i)).unwrap();
     }
     // A PDF next to them keeps its own entity and dictionary.
     d.add(&Space::Model, Common::default(), EntityKind::Image(underlay("D:/a/x.pdf", UnderlayKind::Pdf, "", 595.0, 842.0))).unwrap();
     let text = cadcraft_io::write_dxf(&d).replace("\r\n", "\n");
-    for name in ["DWFUNDERLAY", "DWFDEFINITION", "ACAD_DWFDEFINITIONS", "PDFUNDERLAY", "PDFDEFINITION", "ACAD_PDFDEFINITIONS", "AcDbDwfReference"] {
+    for name in [
+        "DWFUNDERLAY",
+        "DWFDEFINITION",
+        "ACAD_DWFDEFINITIONS",
+        "DGNUNDERLAY",
+        "DGNDEFINITION",
+        "ACAD_DGNDEFINITIONS",
+        "PDFUNDERLAY",
+        "PDFDEFINITION",
+        "ACAD_PDFDEFINITIONS",
+        "AcDbDwfReference",
+        "AcDbDgnReference",
+    ] {
         assert!(text.contains(name), "{name}");
     }
     assert_eq!(text.matches("0\nDWFDEFINITION\n").count(), 2, "two sheets of one file are two definitions");
     let back = cadcraft_io::read_dxf(text.as_bytes()).unwrap();
     let (before, after) = (images_of(&d), images_of(&back));
-    assert_eq!(after.len(), 3);
+    assert_eq!(after.len(), 4);
     for (a, b) in before.iter().zip(&after) {
         assert_eq!((a.kind, &a.path), (b.kind, &b.path));
         assert!((a.u.x - b.u.x).abs() < 1e-9 && (a.insert.x - b.insert.x).abs() < 1e-9);
@@ -62,10 +103,11 @@ fn dwf_underlays_round_trip_through_dxf() {
     // The sheet names survive (the files can't be read here, so the number comes from the name).
     assert_eq!(after[0].sheet, "Floor 1");
     assert_eq!(after[1].sheet, "Floor 2");
-    assert_eq!(after[2].kind, UnderlayKind::Pdf);
+    assert_eq!((after[2].kind, after[2].page), (UnderlayKind::Dgn, 1));
+    assert_eq!(after[3].kind, UnderlayKind::Pdf);
     // Writing again gives the same objects.
     let again = cadcraft_io::write_dxf(&back).replace("\r\n", "\n");
-    for name in ["0\nDWFUNDERLAY\n", "0\nDWFDEFINITION\n", "0\nPDFUNDERLAY\n"] {
+    for name in ["0\nDWFUNDERLAY\n", "0\nDWFDEFINITION\n", "0\nDGNUNDERLAY\n", "0\nDGNDEFINITION\n", "0\nPDFUNDERLAY\n"] {
         assert_eq!(again.matches(name).count(), text.matches(name).count(), "{name}");
     }
 }
@@ -90,11 +132,11 @@ fn dwf_dxf(path: &str, scale: &str, flags: i64) -> String {
     )
 }
 
-/// The group `code` of the first DWFUNDERLAY entity in a written DXF.
-fn group(dxf: &str, code: &str) -> String {
+/// The group `code` of the first `entity` (DWFUNDERLAY, DGNUNDERLAY) in a written DXF.
+fn group(dxf: &str, entity: &str, code: &str) -> String {
     let lines: Vec<&str> = dxf.lines().map(str::trim).collect();
     let pairs: Vec<(&str, &str)> = lines.chunks(2).filter_map(|c| Some((*c.first()?, *c.get(1)?))).collect();
-    let start = pairs.iter().position(|p| *p == ("0", "DWFUNDERLAY")).unwrap();
+    let start = pairs.iter().position(|p| *p == ("0", entity)).unwrap();
     pairs.iter().skip(start + 1).take_while(|p| p.0 != "0").find(|p| p.0 == code).unwrap().1.to_string()
 }
 
@@ -110,12 +152,30 @@ fn a_dwf_underlay_shares_the_inch_scale_and_the_display_flags_of_a_pdf_underlay(
     assert!((i.u.x - 1.0 / 72.0).abs() < 1e-12 && (i.v.y - 1.0 / 72.0).abs() < 1e-12, "{:?} {:?}", i.u, i.v);
     let list = cadcraft_render::build(&d, &Space::Model, &cadcraft_render::Options::default());
     assert!((list.images[0].u.len() - w / 72.0).abs() < 1e-9 && (list.images[0].v.len() - h / 72.0).abs() < 1e-9);
-    assert_eq!(group(&cadcraft_io::write_dxf(&d), "41").parse::<f64>().unwrap(), 1.0);
+    assert_eq!(group(&cadcraft_io::write_dxf(&d), "DWFUNDERLAY", "41").parse::<f64>().unwrap(), 1.0);
     // Monochrome (4), adjust for the background (8) and inverted clip (16) round trip.
     let d = cadcraft_io::read_dxf(dwf_dxf("test:inch.dwf", "1", 31).as_bytes()).unwrap();
     let i = images_of(&d).remove(0);
     assert!(i.clipping && i.monochrome && i.adjust_for_background && i.clip_inverted);
-    assert_eq!(group(&cadcraft_io::write_dxf(&d), "280").parse::<i64>().unwrap(), 31);
+    assert_eq!(group(&cadcraft_io::write_dxf(&d), "DWFUNDERLAY", "280").parse::<i64>().unwrap(), 31);
+}
+
+fn dgn_dxf(path: &str, scale: &str) -> String {
+    format!(
+        "0\nSECTION\n2\nENTITIES\n0\nDGNUNDERLAY\n5\n20\n100\nAcDbEntity\n8\n0\n100\nAcDbUnderlayReference\n340\n30\n10\n0\n20\n0\n30\n0\n\
+         41\n{scale}\n42\n{scale}\n43\n{scale}\n50\n0\n280\n2\n281\n100\n282\n0\n0\nENDSEC\n\
+         0\nSECTION\n2\nOBJECTS\n0\nDGNDEFINITION\n5\n30\n100\nAcDbUnderlayDefinition\n1\n{path}\n2\nDefault\n0\nENDSEC\n0\nEOF\n"
+    )
+}
+
+#[test]
+fn a_dgn_underlay_scale_stays_drawing_units_per_master_unit() {
+    // A DGN design is measured in master units (one model unit each), not in points: no inch factor.
+    let d = cadcraft_io::read_dxf(dgn_dxf("test:units.dgn", "2").as_bytes()).unwrap();
+    let i = images_of(&d).remove(0);
+    assert_eq!((i.kind, i.page, i.sheet.as_str()), (UnderlayKind::Dgn, 1, "Default"));
+    assert!((i.u.x - 2.0).abs() < 1e-12 && (i.v.y - 2.0).abs() < 1e-12, "{:?} {:?}", i.u, i.v);
+    assert_eq!(group(&cadcraft_io::write_dxf(&d), "DGNUNDERLAY", "41").parse::<f64>().unwrap(), 2.0);
 }
 
 /// The colour at screen pixel (x, y) of a 100 × 100 view of the 0..100 square.
@@ -129,48 +189,62 @@ fn sample(d: &Drawing, x: u32, y: u32) -> [u8; 3] {
 }
 
 #[test]
-fn a_dwf_underlay_draws_in_the_raster_svg_and_pdf_outputs() {
+fn the_underlays_draw_in_the_raster_svg_and_pdf_outputs() {
     cadcraft_io::register_image_decoders();
     images::put_bytes("test:out.dwf", w2d()).unwrap();
-    let path = "test:out.dwf";
-    let (w, h) = images::natural_size(path, 1).unwrap();
-    let mut i = underlay(path, UnderlayKind::Dwf, "", w, h);
-    i.u = Vec3::new(100.0 / w, 0.0, 0.0);
-    i.v = Vec3::new(0.0, 100.0 / w, 0.0);
-    let d = add(i);
-    // The sheet is the lower part of the view and its centre is on the red diagonal.
-    let centre_y = 100 - (50.0 * h / w) as u32;
-    let red = (47..=53)
-        .any(|x| (centre_y.saturating_sub(3)..=centre_y + 3).any(|y| matches!(sample(&d, x, y), [r, g, b] if r > 200 && g < 235 && b < 235)));
-    assert!(red, "the diagonal is drawn through the sheet centre");
-    assert_eq!(sample(&d, 50, 2), [255, 255, 255], "nothing above the sheet");
-    let svg = cadcraft_io::svg::export(&d, &Space::Model);
-    assert!(svg.contains("<image") && svg.contains("data:image/png;base64,"));
-    let pdf = cadcraft_io::pdf(&d, &Space::Model, &cadcraft_io::PdfOptions::default()).unwrap();
-    assert!(String::from_utf8_lossy(&pdf).contains("/Subtype /Image"));
+    images::put_bytes("test:out.dgn", dgn()).unwrap();
+    for (path, kind) in [("test:out.dwf", UnderlayKind::Dwf), ("test:out.dgn", UnderlayKind::Dgn)] {
+        let (w, h) = images::natural_size(path, 1).unwrap();
+        let mut i = underlay(path, kind, "", w, h);
+        i.u = Vec3::new(100.0 / w, 0.0, 0.0);
+        i.v = Vec3::new(0.0, 100.0 / w, 0.0);
+        let d = add(i);
+        // The sheet is the lower part of the view and its centre is on the red diagonal.
+        let centre_y = 100 - (50.0 * h / w) as u32;
+        let red = (47..=53)
+            .any(|x| (centre_y.saturating_sub(3)..=centre_y + 3).any(|y| matches!(sample(&d, x, y), [r, g, b] if r > 200 && g < 235 && b < 235)));
+        assert!(red, "{path}: the diagonal is drawn through the sheet centre");
+        assert_eq!(sample(&d, 50, 2), [255, 255, 255], "{path}: nothing above the sheet");
+        let svg = cadcraft_io::svg::export(&d, &Space::Model);
+        assert!(svg.contains("<image") && svg.contains("data:image/png;base64,"), "{path}");
+        let pdf = cadcraft_io::pdf(&d, &Space::Model, &cadcraft_io::PdfOptions::default()).unwrap();
+        assert!(String::from_utf8_lossy(&pdf).contains("/Subtype /Image"), "{path}");
+    }
 }
 
 #[test]
 fn hostile_underlay_files_and_dxf_never_panic() {
     cadcraft_io::register_image_decoders();
-    let base = w2d();
-    for cut in (0..base.len()).step_by(11) {
-        let name = "test:hostile.bin";
-        let _ = images::put_bytes(name, base[..cut].to_vec());
-        let _ = images::natural_size(name, 1);
-        let _ = images::load(name, 1, 512);
-        let _ = images::load(name, 2, 512);
-        let mut flipped = base.clone();
-        if let Some(b) = flipped.get_mut(cut) {
-            *b ^= 0xFF;
+    for base in [w2d(), dgn()] {
+        for cut in (0..base.len()).step_by(11) {
+            let name = "test:hostile.bin";
+            let _ = images::put_bytes(name, base[..cut].to_vec());
+            let _ = images::natural_size(name, 1);
+            let _ = images::load(name, 1, 512);
+            let _ = images::load(name, 2, 512);
+            let mut flipped = base.clone();
+            if let Some(b) = flipped.get_mut(cut) {
+                *b ^= 0xFF;
+            }
+            let _ = cadcraft_io::underlay_sheets(&flipped);
+            let _ = cadcraft_io::underlay_kind(&flipped);
+            let _ = images::put_bytes("test:hostile.flip", flipped);
+            let _ = images::load("test:hostile.flip", 1, 512);
         }
-        let _ = cadcraft_io::underlay_sheets(&flipped);
-        let _ = cadcraft_io::underlay_kind(&flipped);
-        let _ = images::put_bytes("test:hostile.flip", flipped);
-        let _ = images::load("test:hostile.flip", 1, 512);
     }
+    // The OLE signature of a DGN V8 file.
+    let mut v8 = vec![0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1];
+    v8.resize(1024, 0);
+    assert_eq!(cadcraft_io::underlay_sheets(&v8).unwrap_err(), "DGN V8 is not supported: no public specification");
+    assert_eq!(cadcraft_io::underlay_kind(&v8).unwrap_err(), "DGN V8 is not supported: no public specification");
+    images::put_bytes("test:v8.dgn", v8).unwrap();
+    assert_eq!(images::natural_size("test:v8.dgn", 1).unwrap_err(), "DGN V8 is not supported: no public specification");
     // Hostile placements and definitions through the DXF reader.
-    let text = "0\nSECTION\n2\nENTITIES\n0\nDWFUNDERLAY\n5\n20\n100\nAcDbUnderlayReference\n340\nFFFF\n10\nnan\n41\n1e999\n50\n1e999\n0\nENDSEC\n\
-                0\nSECTION\n2\nOBJECTS\n0\nDWFDEFINITION\n5\nFFFF\n1\n\n2\n\n0\nENDSEC\n0\nEOF\n";
-    let _ = cadcraft_io::read_dxf(text.as_bytes());
+    for kind in ["DWF", "DGN"] {
+        let text = format!(
+            "0\nSECTION\n2\nENTITIES\n0\n{kind}UNDERLAY\n5\n20\n100\nAcDbUnderlayReference\n340\nFFFF\n10\nnan\n41\n1e999\n50\n1e999\n0\nENDSEC\n\
+             0\nSECTION\n2\nOBJECTS\n0\n{kind}DEFINITION\n5\nFFFF\n1\n\n2\n\n0\nENDSEC\n0\nEOF\n"
+        );
+        let _ = cadcraft_io::read_dxf(text.as_bytes());
+    }
 }
