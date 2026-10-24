@@ -60,6 +60,7 @@ pub const UI_COMMANDS: &[(&str, &str, &[&str], Option<&str>)] = &[
     ("ui.start", "Start", &["Window", "Start"], None),
     ("ui.dialog.layers", "Layer Properties Manager", &["Window", "Layers"], None),
     ("ui.dialog.blocks", "Blocks", &["Window", "Blocks"], None),
+    ("blockspalette", "Blocks Palette", &[], None),
     ("ui.dialog.qselect", "Quick Select...", &[], None),
     ("ui.dialog.parameters", "Parameters Manager", &["Window", "Parameters Manager"], None),
     ("ui.dialog.dsettings", "Drafting Settings...", &[], None),
@@ -109,6 +110,12 @@ fn run_ui_command_inner(app: &mut CadApp, id: &str, params: &Value) -> Option<Re
     // Explicit opens remain idempotent; typed QUICKCALC with JSON parameters uses the engine's CAL alias.
     if id == "ui.panel.quickcalc" || (matches!(id, "quickcalc" | "qc") && params.is_null()) {
         return Some(crate::palettes::quickcalc::open(app));
+    }
+    if let Some(r) = crate::blocks_palette::route(app, id, params) {
+        return Some(r);
+    }
+    if let Some(r) = crate::smartblocks_dlg::route(app, id, params) {
+        return Some(r);
     }
     if let Some(r) = crate::plotstyles::route(app, id, params) {
         return Some(r);
@@ -363,7 +370,6 @@ fn run_ui_command_inner(app: &mut CadApp, id: &str, params: &Value) -> Option<Re
         }
         "ui.dialog.language"
         | "ui.dialog.layers"
-        | "ui.dialog.blocks"
         | "ui.dialog.dsettings"
         | "ui.dialog.about"
         | "ui.dialog.commands"

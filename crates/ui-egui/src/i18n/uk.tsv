@@ -1365,3 +1365,34 @@
 	Discard	Скасувати зміни
 	Customize	Налаштування інтерфейсу
 	Edit Command Aliases (PGP)...	Редагувати псевдоніми команд (PGP)...
+# Smart Blocks and Markup Assist.
+	Smart Blocks	Розумні блоки
+	Convert to Block	Перетворити на блок
+	Convert to Block (command line)	Перетворити на блок (командний рядок)
+	Detect Repeated Groups	Виявити повторювані групи
+	Search for Similar Objects	Знайти подібні об’єкти
+	Replace Block	Замінити блок
+# Smart Blocks dialogs and the Blocks palette.
+	Block name	Назва блока
+	Base point	Базова точка
+	Lower left of the objects	Лівий нижній кут об’єктів
+	Pick point	Вказати точку
+	Include existing blocks	Враховувати наявні блоки
+	Convert objects to layer 0	Перенести об’єкти на шар 0
+	Instances found: {n}	Знайдено екземплярів: {n}
+	Instances found: none	Знайдено екземплярів: немає
+	The search was cut short; there may be more.	Пошук перервано; екземплярів може бути більше.
+	There is no other block to replace with.	Немає іншого блока для заміни.
+	Replace {n} block reference(s) with the most similar block:	Замінити посилання на блок ({n}) найподібнішим блоком:
+	Replace	Замінити
+	Blocks Palette	Палітра блоків
+	No drawing is open.	Немає відкритого креслення.
+	Suggest placement	Пропонувати розміщення
+	Insert follows how the block's other references sit on the walls.	Вставлення повторює те, як інші посилання на цей блок розташовані на стінах.
+	Suggested	Рекомендовані
+	All blocks	Усі блоки
+# Attach, image and PDF underlay commands.
+	Forget learned placements	Забути вивчені розміщення
+	Drop the placements and recently used blocks learned in all drawings.	Скинути розміщення та нещодавно використані блоки, вивчені в усіх кресленнях.
+	Pick Base Point	Вказати базову точку
+	Forget Learned Placements	Забути вивчені розміщення

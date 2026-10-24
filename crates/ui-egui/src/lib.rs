@@ -12,6 +12,7 @@ pub mod aliasdlg;
 pub mod animation;
 pub mod autosave;
 pub mod bedit;
+pub mod blocks_palette;
 pub mod canvas;
 pub mod chrome;
 pub mod clipboard;
@@ -44,6 +45,7 @@ pub mod parametric;
 pub mod plotstyles;
 pub mod quick;
 pub mod shortcut_menus;
+pub mod smartblocks_dlg;
 pub mod theme;
 pub mod viewcube;
 pub mod vpscale;
@@ -258,6 +260,8 @@ pub struct CadApp {
     pub hatch_dlg: Option<hatchdlg::HatchDlgState>,
     /// The Edit Block Definition dialog ([`bedit`]).
     pub bedit: bedit::State,
+    /// The Smart Blocks dialogs and the Blocks palette's state ([`smartblocks_dlg`], [`blocks_palette`]).
+    pub smart: smartblocks_dlg::State,
 }
 
 impl CadApp {
@@ -298,6 +302,7 @@ impl CadApp {
             alias_dlg: None,
             hatch_dlg: None,
             bedit: bedit::State::default(),
+            smart: smartblocks_dlg::State::default(),
         }
     }
 
@@ -396,6 +401,9 @@ impl CadApp {
         if let Some(dir) = &self.ui.last_lisp_dir {
             prefs["lispDir"] = json!(dir);
         }
+        if !self.session.recent_blocks(1).is_empty() {
+            prefs["smartBlocks"] = self.session.placements_json();
+        }
         prefs.to_string()
     }
 
@@ -425,6 +433,9 @@ impl CadApp {
         }
         if let Some(dir) = v.get("lispDir").and_then(Value::as_str).filter(|d| !d.is_empty()) {
             self.ui.last_lisp_dir = Some(dir.to_string());
+        }
+        if let Some(p) = v.get("smartBlocks") {
+            self.session.load_placements(p);
         }
     }
 
@@ -602,6 +613,7 @@ impl CadApp {
         self.gpu_fault_tick(ctx);
         managers::plot_window_resume(self, ctx);
         hatchdlg::resume(self);
+        smartblocks_dlg::resume(self);
         self.autosave_tick(ctx);
         menus::shortcuts(self, ctx);
         #[cfg(not(target_arch = "wasm32"))]

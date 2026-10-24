@@ -104,6 +104,8 @@ fn missing_marked_ui_literals(language: &str) -> BTreeSet<String> {
         include_str!("../quick.rs"),
         include_str!("../vpscale.rs"),
         include_str!("../options/dialog.rs"),
+        include_str!("../smartblocks_dlg.rs"),
+        include_str!("../blocks_palette.rs"),
     ];
     let mut missing = BTreeSet::new();
     for source in sources {
@@ -360,7 +362,6 @@ fn dialogs_render_in_every_language_and_keep_their_source_ids() {
             ("dsettings", "Drafting Settings"),
             ("about", "About CADCraft"),
             ("commands", "Command Reference"),
-            ("blocks", "Blocks"),
             ("layers", "Layer Properties Manager"),
             ("qselect", "Quick Select"),
             ("parameters", "Parameters Manager"),
