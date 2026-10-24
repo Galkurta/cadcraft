@@ -1,11 +1,11 @@
-//! Raster images on the canvas: textured quads (egui meshes, so on the GPU
+//! Raster images and PDF underlays on the canvas: textured quads (egui meshes, so on the GPU
 //! canvas they are drawn by wgpu with the texture uploaded once). Pictures come from
 //! [`cadcraft_render::images`] (decoded once, checked against the file's modification time);
-//! the textures are cached here by decoded picture, fade and background and dropped least
+//! the textures are cached here by decoded picture, style (fade, gray, holes) and background and dropped least
 //! recently used first. A picture that can't be read draws nothing (its frame and name are
 //! ordinary linework in the display list).
 //!
-//! The GPU canvas draws all pictures before its linework (pictures under the drawing); the
+//! The GPU canvas draws all pictures before its linework (underlays under the drawing); the
 //! CPU path draws them in draw order.
 
 use std::collections::HashMap;
@@ -25,7 +25,7 @@ const MAX_TEXTURES: usize = 24;
 struct Key {
     /// The cached picture (kept alive in the entry, so its address is not reused).
     picture: usize,
-    fade: u8,
+    style: u64,
     bg: (u8, u8, u8),
     nearest: bool,
 }
@@ -60,18 +60,18 @@ fn shrink(r: Raster, max: usize) -> Raster {
     Raster { width: nw as u32, height: nh as u32, rgba }
 }
 
-fn texture(ctx: &egui::Context, picture: &Arc<Raster>, fade: u8, bg: Rgb, nearest: bool) -> TextureHandle {
+fn texture(ctx: &egui::Context, picture: &Arc<Raster>, img: &ImageDraw, bg: Rgb, nearest: bool) -> TextureHandle {
     let store = textures(ctx);
-    let key = Key { picture: Arc::as_ptr(picture) as usize, fade, bg: (bg.0, bg.1, bg.2), nearest };
+    let key = Key { picture: Arc::as_ptr(picture) as usize, style: img.style_key(), bg: (bg.0, bg.1, bg.2), nearest };
     let now = ctx.cumulative_pass_nr();
     let Ok(mut map) = store.lock() else {
-        return upload(ctx, picture, fade, bg, nearest);
+        return upload(ctx, picture, img, bg, nearest);
     };
     if let Some(e) = map.get_mut(&key) {
         e.used = now;
         return e.texture.clone();
     }
-    let texture = upload(ctx, picture, fade, bg, nearest);
+    let texture = upload(ctx, picture, img, bg, nearest);
     while map.len() >= MAX_TEXTURES {
         let Some(oldest) = map.iter().min_by_key(|(_, e)| e.used).map(|(k, _)| k.clone()) else { break };
         map.remove(&oldest);
@@ -80,11 +80,9 @@ fn texture(ctx: &egui::Context, picture: &Arc<Raster>, fade: u8, bg: Rgb, neares
     texture
 }
 
-fn upload(ctx: &egui::Context, picture: &Raster, fade: u8, bg: Rgb, nearest: bool) -> TextureHandle {
+fn upload(ctx: &egui::Context, picture: &Raster, img: &ImageDraw, bg: Rgb, nearest: bool) -> TextureHandle {
     let max = ctx.input(|i| i.max_texture_side).max(1024);
-    let faded =
-        if fade > 0 { images::faded(picture, fade, bg) } else { Raster { width: picture.width, height: picture.height, rgba: picture.rgba.clone() } };
-    let r = shrink(faded, max);
+    let r = shrink(images::styled(picture, img, bg), max);
     let image = egui::ColorImage::from_rgba_unmultiplied([r.width as usize, r.height as usize], &r.rgba);
     ctx.load_texture("cadcraft-picture", image, if nearest { TextureOptions::NEAREST } else { TextureOptions::LINEAR })
 }
@@ -101,7 +99,8 @@ fn mesh(ctx: &egui::Context, xf: &Xf, img: &ImageDraw, alpha: u8, bg: Rgb) -> Op
     {
         return None;
     }
-    let picture = images::load(&img.path).ok()?;
+    let want = (img.longest() * xf.scale).clamp(1.0, 1e5) as u32;
+    let picture = images::load(&img.path, img.page, want).ok()?;
     let det = img.u.x * img.v.y - img.u.y * img.v.x;
     if !(det.is_finite() && det.abs() > 1e-300) {
         return None;
@@ -117,7 +116,7 @@ fn mesh(ctx: &egui::Context, xf: &Xf, img: &ImageDraw, alpha: u8, bg: Rgb) -> Op
     }
     // One picture pixel is at least two screen points wide: keep the pixels sharp.
     let nearest = (img.u.len() * xf.scale) > 2.0 * f64::from(picture.width);
-    let tex = texture(ctx, &picture, img.fade, bg, nearest);
+    let tex = texture(ctx, &picture, img, bg, nearest);
     let a = alpha;
     let tint = Color32::from_rgba_premultiplied(a, a, a, a);
     let mut m = Mesh::with_texture(tex.id());

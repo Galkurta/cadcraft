@@ -635,7 +635,7 @@ fn content_stream(
     let mut alphas: Vec<u8> = Vec::new();
     // Pictures drawn (image XObjects `/Im<n>`), one per distinct picture.
     let mut pictures: Vec<cadcraft_render::images::Raster> = Vec::new();
-    let mut picture_keys: Vec<(String, u8)> = Vec::new();
+    let mut picture_keys: Vec<(String, u32, u64, u32)> = Vec::new();
     for (i, p) in list.prims.iter().enumerate() {
         let want = list.prim_layers.get(i).copied().filter(|l| marked.contains(l));
         let text = u32::try_from(i).ok().and_then(|i| texts.get(&i));
@@ -775,14 +775,17 @@ fn content_stream(
     (c, alphas, pictures)
 }
 
-/// Draw a picture: `q <clips> W n  <matrix> cm /Im<n> Do Q`. The pixels are loaded, faded towards
-/// paper white and kept in `pictures`, once per distinct picture; one that can't be read is left
-/// out.
+/// Resolution pictures are embedded at: pixels per inch of paper.
+const PICTURE_DPI: f64 = 200.0;
+
+/// Draw a picture: `q <clips> W n  <matrix> cm /Im<n> Do Q`. The pixels are loaded (a PDF page at
+/// about [`PICTURE_DPI`]), styled (faded towards paper white, gray, holes) and kept in `pictures`, once per distinct
+/// picture; one that can't be read is left out.
 #[allow(clippy::too_many_arguments)]
 fn picture(
     c: &mut String,
     pictures: &mut Vec<cadcraft_render::images::Raster>,
-    keys: &mut Vec<(String, u8)>,
+    keys: &mut Vec<(String, u32, u64, u32)>,
     img: &cadcraft_render::ImageDraw,
     map: &Map,
     transparency: u8,
@@ -796,16 +799,14 @@ fn picture(
     if ![o.x, o.y, u.x, u.y, v.x, v.y].iter().all(|n| n.is_finite()) {
         return;
     }
-    let Ok(raster) = cadcraft_render::images::load(&img.path) else { return };
-    let key = (img.path.clone(), img.fade);
+    let paper_pt = (u - o).len().max((v - o).len());
+    let want = (paper_pt / 72.0 * PICTURE_DPI).clamp(1.0, 1e5) as u32;
+    let Ok(raster) = cadcraft_render::images::load(&img.path, img.page, want) else { return };
+    let key = (img.path.clone(), img.page, img.style_key(), raster.width);
     let n = match keys.iter().position(|k| *k == key) {
         Some(n) => n,
         None => {
-            let r = if img.fade > 0 {
-                cadcraft_render::images::faded(&raster, img.fade, Rgb(255, 255, 255))
-            } else {
-                cadcraft_render::images::Raster { width: raster.width, height: raster.height, rgba: raster.rgba.clone() }
-            };
+            let r = cadcraft_render::images::styled(&raster, img, Rgb(255, 255, 255));
             keys.push(key);
             pictures.push(r);
             keys.len() - 1

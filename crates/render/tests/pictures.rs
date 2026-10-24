@@ -81,6 +81,24 @@ fn fade_and_clip_change_what_is_drawn() {
 }
 
 #[test]
+fn monochrome_grays_the_picture_and_an_inverted_clip_cuts_a_hole() {
+    images::put_bytes("test:style.png", png()).unwrap();
+    let gray = Image { monochrome: true, ..picture("test:style.png") };
+    let l = list(&drawing(gray, "0"));
+    let (red, blue) = (pixel(&l, 25, 50), pixel(&l, 75, 50));
+    assert!(red[0] == red[1] && red[1] == red[2] && (70..82).contains(&red[0]), "red in gray: {red:?}");
+    assert!(blue[0] == blue[1] && blue[1] == blue[2] && (25..35).contains(&blue[0]), "blue in gray: {blue:?}");
+    // The boundary covers the left pixel column; inverted, that column is the hole.
+    let boundary = vec![Vec2::new(-0.5, -0.5), Vec2::new(0.5, 0.5)];
+    let inside = Image { clipping: true, clip: boundary.clone(), ..picture("test:style.png") };
+    let hole = Image { clipping: true, clip_inverted: true, clip: boundary, ..picture("test:style.png") };
+    let l = list(&drawing(inside, "0"));
+    assert_eq!((pixel(&l, 25, 50), pixel(&l, 75, 50)), ([255, 0, 0], [255, 255, 255]));
+    let l = list(&drawing(hole, "0"));
+    assert_eq!((pixel(&l, 25, 50), pixel(&l, 75, 50)), ([255, 255, 255], [0, 0, 255]), "the clipped-out column is cut out, the rest stays");
+}
+
+#[test]
 fn object_transparency_blends_with_the_background() {
     images::put_bytes("test:alpha.png", png()).unwrap();
     let mut d = drawing(picture("test:alpha.png"), "0");
@@ -112,15 +130,16 @@ fn hostile_pictures_are_errors_not_panics() {
     images::put_bytes("test:empty.png", Vec::new()).unwrap();
     let l = list(&drawing(picture("test:junk.png"), "0"));
     assert_eq!(pixel(&l, 50, 50), [255, 255, 255], "an undecodable picture draws nothing");
-    assert!(images::load("test:junk.png").is_err());
-    assert!(images::load("test:empty.png").is_err());
-    assert!(images::load("test:none.png").is_err());
+    assert!(images::load("test:junk.png", 0, 0).is_err());
+    assert!(images::load("test:empty.png", 0, 0).is_err());
+    assert!(images::load("test:none.png", 0, 0).is_err());
     // A valid 8000 × 8000 PNG (64 megapixels) is refused before any pixel is allocated.
     let mut big = Vec::new();
     image::GrayImage::new(8000, 8000).write_to(&mut Cursor::new(&mut big), image::ImageFormat::Png).unwrap();
     images::put_bytes("test:huge.png", big).unwrap();
-    assert!(images::load("test:huge.png").unwrap_err().contains("pixels"));
-    // NaN placements.
+    assert!(images::load("test:huge.png", 0, 0).unwrap_err().contains("pixels"));
+    // PDF pages without a reader installed, and NaN placements.
+    assert!(images::load("test:place.png", 1, 512).is_err());
     let nan = Image { insert: Vec3::new(f64::NAN, 0.0, 0.0), u: Vec3::new(f64::INFINITY, 0.0, 0.0), ..picture("test:junk.png") };
     let l = list(&drawing(nan, "0"));
     assert!(l.prims.is_empty());

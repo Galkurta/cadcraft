@@ -1,16 +1,18 @@
-//! Pictures for IMAGE entities: decoding with size caps and a cache.
+//! Pictures for IMAGE entities and PDF underlays: decoding with size caps and a cache.
 //!
 //! A picture is named by a path. Bytes the host handed over (the web build has no files, and
 //! tests have none) are registered under a name with [`put_bytes`] and found first; otherwise
-//! the path is read from disk (native builds). Decoded pictures are cached by path and checked against the file's modification time on every lookup, so an edited
+//! the path is read from disk (native builds). Decoded pictures are cached by (path, page,
+//! size bucket) and checked against the file's modification time on every lookup, so an edited
 //! file shows up without reopening the drawing. Every size is capped: a hostile file is an
 //! `Err`, never a panic or an unbounded allocation.
 //!
-//! PNG and JPEG decode here.
+//! PNG and JPEG decode here. A PDF page needs the PDF reader, which lives above this crate: the
+//! host registers it once with [`set_pdf_decoder`] (the engine does at startup).
 
 use std::collections::HashMap;
 use std::io::Cursor;
-use std::sync::{Arc, LazyLock, Mutex};
+use std::sync::{Arc, LazyLock, Mutex, OnceLock};
 
 /// Largest picture file read.
 pub const MAX_FILE_BYTES: u64 = 256 << 20;
@@ -21,6 +23,9 @@ const MAX_CACHE_BYTES: usize = 768 << 20;
 /// Most bytes (and pictures) held for [`put_bytes`].
 const MAX_EMBEDDED_BYTES: usize = 512 << 20;
 const MAX_EMBEDDED: usize = 256;
+/// A PDF page is rasterised at a power-of-two long side between these (pixels).
+pub const MIN_PAGE_PX: u32 = 256;
+pub const MAX_PAGE_PX: u32 = 4096;
 
 /// A decoded picture: straight-alpha RGBA, top row first.
 #[derive(Debug)]
@@ -42,6 +47,21 @@ fn checked_len(w: u32, h: u32) -> Option<usize> {
     let px = u64::from(w) * u64::from(h);
     (px > 0 && px <= MAX_PIXELS).then_some(())?;
     usize::try_from(px.checked_mul(4)?).ok()
+}
+
+/// The PDF reader the host provides: a page's size in points, and the page drawn with its long
+/// side `max_dim` pixels (white paper, RGBA).
+#[derive(Clone, Copy)]
+pub struct PdfDecoder {
+    pub page_size: fn(&[u8], u32) -> Result<(f64, f64), String>,
+    pub render: fn(&[u8], u32, u32) -> Result<Raster, String>,
+}
+
+static PDF: OnceLock<PdfDecoder> = OnceLock::new();
+
+/// Register the PDF reader (the first call wins).
+pub fn set_pdf_decoder(d: PdfDecoder) {
+    let _ = PDF.set(d);
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -173,6 +193,14 @@ pub fn decode_raster(bytes: &[u8]) -> Result<Raster, String> {
     Ok(Raster { width: w, height: h, rgba: img.into_raw() })
 }
 
+fn is_pdf(bytes: &[u8]) -> bool {
+    bytes.get(..1024.min(bytes.len())).is_some_and(|h| h.windows(5).any(|w| w == b"%PDF-"))
+}
+
+fn pdf() -> Result<&'static PdfDecoder, String> {
+    PDF.get().ok_or_else(|| "PDF pages can't be shown here: no PDF reader is installed".to_string())
+}
+
 struct Entry {
     stamp: Stamp,
     raster: Arc<Raster>,
@@ -181,10 +209,10 @@ struct Entry {
 
 #[derive(Default)]
 struct Cache {
-    pictures: HashMap<String, Entry>,
+    pictures: HashMap<(String, u32, u32), Entry>,
     /// Pictures that failed to decode, by the stamp they failed at (a broken file is not re-read every frame).
-    failed: HashMap<String, (Stamp, String)>,
-    sizes: HashMap<String, (Stamp, (f64, f64))>,
+    failed: HashMap<(String, u32, u32), (Stamp, String)>,
+    sizes: HashMap<(String, u32), (Stamp, (f64, f64))>,
     clock: u64,
     bytes: usize,
 }
@@ -195,32 +223,38 @@ fn cache() -> &'static Mutex<Cache> {
     &CACHE
 }
 
-/// The size of the picture in pixels.
-pub fn natural_size(path: &str) -> Result<(f64, f64), String> {
+/// The size of the picture: pixels for a raster image (`page` 0), points for a PDF page (1-based).
+pub fn natural_size(path: &str, page: u32) -> Result<(f64, f64), String> {
     let stamp = stamp_of(path)?;
     {
         let c = cache().lock().map_err(|_| "the picture cache is unavailable".to_string())?;
-        if let Some((s, size)) = c.sizes.get(path)
+        if let Some((s, size)) = c.sizes.get(&(path.to_string(), page))
             && *s == stamp
         {
             return Ok(*size);
         }
     }
     let (bytes, stamp) = source(path)?;
-    let (w, h) = raster_dimensions(&bytes)?;
-    let size = (f64::from(w), f64::from(h));
+    let size = if page == 0 {
+        let (w, h) = raster_dimensions(&bytes)?;
+        (f64::from(w), f64::from(h))
+    } else {
+        (pdf()?.page_size)(&bytes, page)?
+    };
     let mut c = cache().lock().map_err(|_| "the picture cache is unavailable".to_string())?;
     if c.sizes.len() > 4096 {
         c.sizes.clear();
     }
-    c.sizes.insert(path.to_string(), (stamp, size));
+    c.sizes.insert((path.to_string(), page), (stamp, size));
     Ok(size)
 }
 
-/// The decoded picture for `path`.
-pub fn load(path: &str) -> Result<Arc<Raster>, String> {
+/// The picture for `path` (`page` 0: a raster image; 1 or more: that PDF page, drawn with its
+/// long side near `want_px`, rounded up to a power of two within [`MIN_PAGE_PX`]..=[`MAX_PAGE_PX`]).
+pub fn load(path: &str, page: u32, want_px: u32) -> Result<Arc<Raster>, String> {
+    let bucket = if page == 0 { 0 } else { want_px.max(1).next_power_of_two().clamp(MIN_PAGE_PX, MAX_PAGE_PX) };
     let stamp = stamp_of(path)?;
-    let key = path.to_string();
+    let key = (path.to_string(), page, bucket);
     {
         let mut c = cache().lock().map_err(|_| "the picture cache is unavailable".to_string())?;
         c.clock += 1;
@@ -239,13 +273,20 @@ pub fn load(path: &str) -> Result<Arc<Raster>, String> {
     }
     let (bytes, stamp) = source(path)?;
     // Decoded outside the lock: a big picture doesn't stall the others.
-    let decoded = decode_raster(&bytes).and_then(|r| {
+    let decoded = if page == 0 {
+        if is_pdf(&bytes) { Err(format!("{path}: a PDF is attached with PDFATTACH, not as an image")) } else { decode_raster(&bytes) }
+    } else {
+        pdf().and_then(|d| (d.render)(&bytes, page, bucket))
+    }
+    .and_then(|r| {
         checked_len(r.width, r.height).filter(|n| *n == r.rgba.len()).map(|_| r).ok_or_else(|| "the decoded picture is inconsistent".to_string())
     });
     let raster = match decoded {
         Ok(r) => r,
         Err(why) => {
-            if let Ok(mut c) = cache().lock() {
+            // A missing PDF reader is the host's to fix; it is not remembered.
+            let reader_missing = page > 0 && PDF.get().is_none();
+            if !reader_missing && let Ok(mut c) = cache().lock() {
                 if c.failed.len() > 4096 {
                     c.failed.clear();
                 }
@@ -282,6 +323,53 @@ pub fn faded(r: &Raster, fade: u8, bg: cadcraft_color::Rgb) -> Raster {
         *blue = mix(*blue, bg.2);
     }
     Raster { width: r.width, height: r.height, rgba }
+}
+
+/// `r` as `img` shows it: in shades of gray when it is monochrome, with the inverted clip
+/// boundary's inside made transparent, faded towards `bg`.
+pub fn styled(r: &Raster, img: &crate::ImageDraw, bg: cadcraft_color::Rgb) -> Raster {
+    let mut out = Raster { width: r.width, height: r.height, rgba: r.rgba.clone() };
+    if img.monochrome {
+        for [red, green, blue, _] in out.rgba.as_chunks_mut::<4>().0 {
+            let y = ((u32::from(*red) * 299 + u32::from(*green) * 587 + u32::from(*blue) * 114 + 500) / 1000) as u8;
+            (*red, *green, *blue) = (y, y, y);
+        }
+    }
+    punch(&mut out, img);
+    if img.fade > 0 {
+        out = faded(&out, img.fade, bg);
+    }
+    out
+}
+
+/// Make the pixels of `r` inside `img`'s holes transparent.
+fn punch(r: &mut Raster, img: &crate::ImageDraw) {
+    use tiny_skia::{FillRule, Mask, PathBuilder, Transform};
+    let (w, h) = (f64::from(r.width), f64::from(r.height));
+    let det = img.u.x * img.v.y - img.u.y * img.v.x;
+    if img.holes.is_empty() || !(det.is_finite() && det.abs() > 1e-300) {
+        return;
+    }
+    let Some(mut mask) = Mask::new(r.width, r.height) else { return };
+    for poly in &img.holes {
+        let mut pb = PathBuilder::new();
+        for (i, q) in poly.iter().enumerate() {
+            let d = *q - img.origin;
+            let (a, b) = ((d.x * img.v.y - d.y * img.v.x) / det, (img.u.x * d.y - img.u.y * d.x) / det);
+            let (x, y) = ((a * w) as f32, ((1.0 - b) * h) as f32);
+            if !(x.is_finite() && y.is_finite()) {
+                return;
+            }
+            if i == 0 { pb.move_to(x, y) } else { pb.line_to(x, y) }
+        }
+        pb.close();
+        if let Some(path) = pb.finish() {
+            mask.fill_path(&path, FillRule::Winding, true, Transform::identity());
+        }
+    }
+    for (px, m) in r.rgba.as_chunks_mut::<4>().0.iter_mut().zip(mask.data()) {
+        px[3] = (u32::from(px[3]) * u32::from(255 - m) / 255) as u8;
+    }
 }
 
 /// `r` as a `data:image/png;base64,…` URI (for SVG); `None` when it can't be encoded.
@@ -329,11 +417,11 @@ mod tests {
         let file = std::env::temp_dir().join(format!("cadcraft-images-{}.png", std::process::id()));
         assert!(std::fs::write(&file, &png).is_ok());
         let path = file.to_string_lossy().into_owned();
-        assert!(load(&path).is_ok());
+        assert!(load(&path, 0, 0).is_ok());
         assert_eq!(reads(&path), 1);
-        assert!(load(&path).is_ok());
-        assert_eq!(natural_size(&path), Ok((2.0, 2.0)));
-        assert_eq!(natural_size(&path), Ok((2.0, 2.0)));
+        assert!(load(&path, 0, 0).is_ok());
+        assert_eq!(natural_size(&path, 0), Ok((2.0, 2.0)));
+        assert_eq!(natural_size(&path, 0), Ok((2.0, 2.0)));
         // natural_size reads once for its own cache; repeats don't read.
         assert_eq!(reads(&path), 2);
         let _ = std::fs::remove_file(&file);

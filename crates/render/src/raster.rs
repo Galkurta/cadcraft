@@ -165,7 +165,7 @@ pub fn render_png(list: &DisplayList, view: &View, o: &RasterOptions) -> Option<
     render(list, view, o)?.encode_png().ok()
 }
 
-/// Draw a picture: its pixels, faded towards
+/// Draw a picture: its pixels (a PDF page at about the resolution it shows at), faded towards
 /// the background, `alpha` opaque, inside its clip polygons. A picture that can't be read is
 /// left out (its frame is drawn as polylines).
 fn draw_image(pm: &mut Pixmap, view: &View, img: &ImageDraw, alpha: u8, bg: Rgb) {
@@ -173,7 +173,8 @@ fn draw_image(pm: &mut Pixmap, view: &View, img: &ImageDraw, alpha: u8, bg: Rgb)
     if img.missing || alpha == 0 {
         return;
     }
-    let Ok(raster) = crate::images::load(&img.path) else { return };
+    let want = (img.longest() * view.scale).clamp(1.0, 1e5) as u32;
+    let Ok(raster) = crate::images::load(&img.path, img.page, want) else { return };
     let (w, h) = (f64::from(raster.width), f64::from(raster.height));
     let screen = |x: f64, y: f64| view.to_screen(img.world(x, y, w, h));
     let ((x0, y0), (x1, y1), (x2, y2)) = (screen(0.0, 0.0), screen(w, 0.0), screen(0.0, h));
@@ -188,12 +189,12 @@ fn draw_image(pm: &mut Pixmap, view: &View, img: &ImageDraw, alpha: u8, bg: Rgb)
     {
         return;
     }
-    let faded;
-    let raster = if img.fade > 0 {
-        faded = crate::images::faded(&raster, img.fade, bg);
-        &faded
-    } else {
+    let styled;
+    let raster = if img.is_plain() {
         &*raster
+    } else {
+        styled = crate::images::styled(&raster, img, bg);
+        &styled
     };
     // tiny-skia pixmaps are premultiplied.
     let mut data = raster.rgba.clone();

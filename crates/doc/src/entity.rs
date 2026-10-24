@@ -877,6 +877,26 @@ pub struct Image {
     pub pixel_size: Vec2,
     #[serde(default)]
     pub resolution_units: u8,
+    /// 0: a raster image (PNG/JPEG). 1 or more: an underlay showing that page of the PDF at
+    /// `path`; then `u` and `v` are the scale of one point (1/72 inch) and `size` the page size
+    /// in points (0 until the file has been read).
+    #[serde(default, skip_serializing_if = "is_zero_u32")]
+    pub page: u32,
+    /// An underlay's display flags (DXF group 280, bits 4, 8 and 16): shown in shades of gray,
+    /// colours adjusted for the background, and the clip boundary inverted (the underlay shows
+    /// outside it instead of inside).
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub monochrome: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub adjust_for_background: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub clip_inverted: bool,
+}
+fn is_zero_u32(v: &u32) -> bool {
+    *v == 0
+}
+fn is_false(v: &bool) -> bool {
+    !*v
 }
 fn image_display() -> u16 {
     7
@@ -904,6 +924,10 @@ impl Default for Image {
             fade: 0,
             pixel_size: image_pixel(),
             resolution_units: 0,
+            page: 0,
+            monochrome: false,
+            adjust_for_background: false,
+            clip_inverted: false,
         }
     }
 }

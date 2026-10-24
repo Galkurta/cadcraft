@@ -128,19 +128,19 @@ pub fn export_list(list: &cadcraft_render::DisplayList, window: Option<Bounds2>)
     s
 }
 
-/// An `<image>` with the picture inlined as a PNG data URI, inside its clip polygons; a picture
-/// that can't be read is left out.
+/// An `<image>` with the picture inlined as a PNG data URI (a PDF page at 2048 pixels), inside
+/// its clip polygons; a picture that can't be read is left out.
 fn picture(s: &mut String, img: &cadcraft_render::ImageDraw, op: &str, x0: f64, y1: f64, dp: usize) {
     if img.missing {
         return;
     }
-    let Ok(raster) = cadcraft_render::images::load(&img.path) else { return };
-    let faded;
-    let raster = if img.fade > 0 {
-        faded = cadcraft_render::images::faded(&raster, img.fade, Rgb(255, 255, 255));
-        &faded
-    } else {
+    let Ok(raster) = cadcraft_render::images::load(&img.path, img.page, 2048) else { return };
+    let styled;
+    let raster = if img.is_plain() {
         &*raster
+    } else {
+        styled = cadcraft_render::images::styled(&raster, img, Rgb(255, 255, 255));
+        &styled
     };
     let Some(uri) = cadcraft_render::images::png_data_uri(raster) else { return };
     let (w, h) = (f64::from(raster.width), f64::from(raster.height));
