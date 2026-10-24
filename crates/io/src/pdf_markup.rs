@@ -1,7 +1,7 @@
 //! A minimal PDF reader for review markups: the annotations of one page as markup JSON
 //! (normalized page coordinates `[u, v]`, origin top left, v down), so MARKUPIMPORT can turn a
-//! reviewer's comments into drawing objects, and the decoded content of a page (for a page
-//! interpreter above this reader).
+//! reviewer's comments into drawing objects, and the decoded content of a page for the plotting
+//! interpreter.
 //!
 //! Our own parser (clean-room, from the public PDF file structure): classic xref tables and xref
 //! streams (with predictors), object streams, the filters Flate, LZW, ASCIIHex, ASCII85 and
@@ -9,12 +9,13 @@
 //! `crypt`), a damaged or missing xref rebuilt by scanning for `N G obj`, the page tree with
 //! inherited `/MediaBox`, `/CropBox` and `/Rotate`, and the annotation types of a review:
 //! FreeText, Text (sticky note), Square, Circle, Line, PolyLine, Polygon (a cloud with `/BE /S /C`
-//! or `/IT /PolygonCloud`) and Ink; `/RC` rich text is read as plain text. The file is hostile
-//! input: every count, depth, array and inflated size is capped, objects are read through `get`
-//! and `Option`, and a damaged file is an error or a page with fewer markups, never a panic.
+//! or `/IT /PolygonCloud`) and Ink; `/RC` rich text is read as plain text. Drawing a page is the
+//! job of the child module `page`, which reads resources through this parser. The file is hostile input: every count, depth, array and inflated size is capped,
+//! objects are read through `get` and `Option`, and a damaged file is an error or a page with
+//! fewer markups, never a panic.
 //!
 //! Not read (ponytail: add when a real file needs it): the owner password, public-key handlers,
-//! and appearance streams (the image filters stop `decode`).
+//! and appearance streams (the image filters stop `decode`; `page` decodes DCT itself).
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
@@ -24,6 +25,7 @@ use crate::{IoError, Result};
 
 mod crypt;
 mod filters;
+pub(crate) mod page;
 mod rich;
 
 use crypt::Crypt;
