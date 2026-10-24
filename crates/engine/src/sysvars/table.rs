@@ -40,6 +40,9 @@ enum Def {
 
 /// Header variables: name, kind, the default the commands use while the header has none.
 const HEADER: &[(&str, Kind, Def)] = &[
+    // BCONVERT: also convert existing block references of identical geometry (1); put the new block's objects on layer 0 (1).
+    ("BCONVERTINCLUDEEXISTINGBLOCKS", Kind::Choice(&[0, 1]), Def::Int(0)),
+    ("BCONVERTLAYER", Kind::Choice(&[0, 1]), Def::Int(0)),
     ("CENTEREXE", Kind::Real { min: 0.0, strict: false }, Def::Units(0.12, 3.5)),
     ("CHAMFERA", Kind::Real { min: 0.0, strict: false }, Def::Real(0.0)),
     ("CHAMFERB", Kind::Real { min: 0.0, strict: false }, Def::Real(0.0)),

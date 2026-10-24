@@ -708,6 +708,11 @@ pub struct Session {
     lisp_last: Option<std::result::Result<lisp::value::Value, String>>,
     /// What the last HATCHPICK kept (the Hatch and Gradient dialog's picks).
     pub hatch_picks: Option<cmd::hatch::HatchPicks>,
+    /// The point the last BPICK took (the Convert to Block dialog's base point pick).
+    pub smart_pick: Option<Vec2>,
+    /// Block placements learned across drawings (INSERT's placement suggestion); the host saves
+    /// and loads them ([`Session::placements_json`], [`Session::load_placements`]).
+    pub(crate) placements: cmd::smartblocks::Learned,
 }
 
 impl Default for Session {
@@ -757,6 +762,8 @@ impl Session {
             lisp: lisp::LispState::default(),
             lisp_last: None,
             hatch_picks: None,
+            smart_pick: None,
+            placements: cmd::smartblocks::Learned::default(),
         }
     }
     pub fn new_drawing(&mut self, metric: bool) -> usize {
