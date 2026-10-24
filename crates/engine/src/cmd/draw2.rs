@@ -912,7 +912,7 @@ enum CloudKind {
     Free,
 }
 
-fn default_arc_len(s: &Session) -> f64 {
+pub(crate) fn default_arc_len(s: &Session) -> f64 {
     let d = s.doc().ok();
     let metric = d.is_some_and(|d| d.header.i64("MEASUREMENT", 0) == 1);
     d.map(|d| d.header.f64("REVCLOUDARCLEN", if metric { 15.0 } else { 0.5 })).unwrap_or(0.5).max(1e-6)
@@ -986,7 +986,7 @@ fn object_outline(s: &Session, h: Handle) -> Result<Vec<Vec2>> {
     Ok(pts)
 }
 
-fn cloud_entity(vs: Vec<PolyVertex>, calligraphy: bool, arc_len: f64) -> EntityKind {
+pub(crate) fn cloud_entity(vs: Vec<PolyVertex>, calligraphy: bool, arc_len: f64) -> EntityKind {
     let vs = if calligraphy { vs.into_iter().map(|v| PolyVertex { start_width: 0.0, end_width: arc_len * 0.15, ..v }).collect() } else { vs };
     lwpoly(vs, true)
 }
