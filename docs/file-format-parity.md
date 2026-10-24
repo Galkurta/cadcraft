@@ -1,6 +1,6 @@
 # File-format parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-24 · **Change:** minor (DIMASSOC objects for angular, diametric and radial dimensions; raster images: ATTACH and IMAGEATTACH; PDF underlays: PDFATTACH) · **Target:** Autodesk AutoCAD 2027
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-24 · **Change:** minor (DIMASSOC objects for angular, diametric and radial dimensions; raster images: ATTACH and IMAGEATTACH; PDF and DWF underlays: PDFATTACH, DWFATTACH) · **Target:** Autodesk AutoCAD 2027
 
 Every format AutoCAD 2027 reads or writes, with CADCraft's support, fidelity and tests. Work
 items are in [gaps.md](gaps.md#file-formats); the weighted score feeds
@@ -90,7 +90,7 @@ on read with a note, so such files no longer exceed the DXF limit (#1482). **DWG
 | WIPEOUT | yes | yes (#147, fixes #79) | |
 | MLINE (+ MLINESTYLE), HELIX, TOLERANCE | yes (#510, #420) | yes | |
 | REGION | other programs' REGIONs (ACIS data) kept as Unknown | our regions are written as closed polylines tagged with CADCraft xdata (#510; ACIS has no public spec) | |
-| 3DSOLID, BODY, SURFACE, MESH, SHAPE, DWFUNDERLAY, DGNUNDERLAY, OLE2FRAME, LIGHT, CAMERA, SECTION, POINTCLOUD, proxy entities | kept as Unknown (raw tags) | written back as read, with their CLASS records (#528); a proxy entity's class number (group 91) is renumbered to its class's place in the written CLASSES (#1812); **dropped by DWG save** (acadrust) | only their layer follows edits |
+| 3DSOLID, BODY, SURFACE, MESH, SHAPE, DGNUNDERLAY, OLE2FRAME, LIGHT, CAMERA, SECTION, POINTCLOUD, proxy entities | kept as Unknown (raw tags) | written back as read, with their CLASS records (#528); a proxy entity's class number (group 91) is renumbered to its class's place in the written CLASSES (#1812); **dropped by DWG save** (acadrust) | only their layer follows edits |
 | Header variables | all read | 36 written | AutoCAD writes about 280 |
 | Tables: LAYER (+ transparency, description), LTYPE, STYLE, DIMSTYLE, BLOCK_RECORD | yes | yes | |
 | Tables: VPORT, VIEW, UCS, APPID | yes | yes: saved viewport configurations (#504), named views, UCSs | UCS elevation lost |
@@ -114,7 +114,7 @@ on read with a note, so such files no longer exceed the DXF limit (#1482). **DWG
 | PDF import (PDFIMPORT) and PDF underlays (PDFATTACH) | yes | PDFATTACH underlays (PDFUNDERLAY, PDFDEFINITION and `ACAD_PDFDEFINITIONS` read and written; the scale groups count drawing units per inch and the display flags clip, show, monochrome, adjust-for-background and inverted clip round trip; monochrome and an inverted clip are drawn) draw paths, text (embedded TrueType/OpenType/CFF/Type 1; other fonts with our own), images, shadings, tiling patterns and form XObjects; JPX, JBIG2 and CCITT images, mesh shadings, soft masks and blend modes aren't drawn; adjust-for-background is kept, not applied (the page is drawn on its own paper); no PDFIMPORT | 8–14 |
 | Raster images attach (PNG, JPEG, TIFF, BMP …) | yes | ATTACH/IMAGEATTACH for PNG and JPEG, drawn on screen, in PNG/SVG exports and PDF plots with clip, fade, transparency and IMAGEFRAME; no TIFF or BMP | 2–3 |
 | PNG / JPEG / BMP / TIFF export | PNGOUT, JPGOUT, BMPOUT, TIFOUT | PNG; SVG too (AutoCAD doesn't export SVG) | 1–2 |
-| DWF/DWFx export, DWF underlay | yes | no | 10–15 |
+| DWF/DWFx export, DWF underlay | yes | DWFATTACH underlays for DWFx (ECMA-388 XPS pages) and DWF 6 (W2D), DWFUNDERLAY/DWFDEFINITION read and written (same scale in drawing units per inch and display flags as PDF underlays); no DWF export | 8–12 |
 | DGN import/export/underlay | yes | no (needs a public spec; owner decision) | 25–40 |
 | WMF, EPS, ACIS SAT, STL, FBX, IGES/STEP (Windows), 3DS | various | no; most are 3D and wait for M11 | 20–40 |
 | SHX fonts (`.shx`, big fonts) | read | **not parsed**: our stroke font or FONTALT stands in, so text metrics differ from AutoCAD | 8–12 |
@@ -145,6 +145,7 @@ our output in AutoCAD black-box.
 | 2026-10-19 | minor | A file's own arrowhead blocks with standard names (AutoCAD's `_Dot`, `_DotSmall`), named only by a dimension style, are kept and saved as they were instead of being replaced by CADCraft's solids; PURGE keeps arrowhead blocks dimension styles name |
 | 2026-10-20 | minor | DIMENSION: the `*D` block's MTEXT, and the MTEXT EXPLODE leaves, hold the diameter sign as `%%c` instead of the decoded U+2300, which no SHX font has, so other programs plotted diameter dimensions in an SHX style without the sign (#1645) |
 | 2026-10-21 | minor | Proxy objects and entities keep their class through a save: group 91 renumbered to the written CLASSES (the class it names is kept), a proxy whose number names no class dropped (#1812) |
+| 2026-10-24 | minor | DWF underlays: DWFATTACH places a sheet of a DWFx (XPS pages: paths, fills, gradients, text, pictures, clips) or DWF 6 (W2D) file; DWFUNDERLAY/DWFDEFINITION and `ACAD_DWFDEFINITIONS` read and written with the same scale (drawing units per inch of the sheet) and display flags as PDF underlays, which AutoCAD 2023 writes for DWFUNDERLAY too (AcDbUnderlayReference is shared) |
 | 2026-10-24 | minor | PDF underlays (PDFATTACH; PDFUNDERLAY, PDFDEFINITION and ACAD_PDFDEFINITIONS in DXF) attach and draw paths, text, images, shadings, patterns and forms on screen, in PNG/SVG exports and in PDF plots; the scale groups 41/42/43 are read and written as drawing units per inch of the page (AutoCAD 2023: 1 shows a 612-point page 8.5 units wide, not 612), and the display flags 4 (monochrome), 8 (adjust colours for background) and 16 (inverted clip) are modelled, round trip, and monochrome and the inverted clip are drawn (reported by ATARYS-LAB); PDFATTACH's `scale` means the same |
 | 2026-10-24 | minor | PNG and JPEG raster images (ATTACH, IMAGEATTACH) attach and display on screen, in PNG and SVG exports and in PDF plots (clip, fade, object transparency, IMAGEFRAME); TIFF and BMP still not read |
 | 2026-10-17 | minor | DWG read: DGN line style components no line style definition reaches are left out before the DXF bridge, with a read note; an 83 MB site plan with 888,483 of them (1.2 GB of DXF, over the limit) now opens (#1482) |
