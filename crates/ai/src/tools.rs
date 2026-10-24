@@ -1,8 +1,8 @@
-//! MCP tool definitions and dispatch.
+//! Tool definitions and dispatch, shared by the MCP server and the Assistant.
 
 use serde_json::{Value, json};
 
-use crate::backend::Backend;
+use crate::Backend;
 
 /// The `tools/list` payload: one definition (name, description, input schema) per MCP tool,
 /// including the UI-only tools when `has_ui` says a window is available.

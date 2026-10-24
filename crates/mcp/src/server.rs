@@ -4,8 +4,7 @@ use std::io::{BufRead, Write};
 
 use serde_json::{Value, json};
 
-use crate::backend::Backend;
-use crate::tools::{call_tool, tool_definitions};
+use cadcraft_ai::{Backend, call_tool, tool_definitions};
 
 pub const PROTOCOL_VERSION: &str = "2025-06-18";
 const SUPPORTED: &[&str] = &[PROTOCOL_VERSION, "2025-03-26", "2024-11-05"];

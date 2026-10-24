@@ -10,6 +10,7 @@ publish = false
 workspace = true
 
 [dependencies]
+cadcraft-ai = { workspace = true }
 cadcraft-engine = { workspace = true }
 cadcraft-io = { workspace = true }
 cadcraft-mcp = { workspace = true }
