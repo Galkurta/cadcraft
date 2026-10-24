@@ -120,6 +120,7 @@ numbers):
 | Grips | Hot grips with Space to cycle Stretch, Move, Rotate, Scale and Mirror |
 | Interface languages | English, Ukrainian (Українська), Brazilian Portuguese (Português (Brasil)), German (Deutsch), Spanish (Español), Czech (Čeština), Russian (Русский), French (Français), Simplified Chinese (简体中文, with an installed CJK font), Italian (Italiano), Korean (한국어, with an installed Hangul font), Swedish (Svenska), Arabic (العربية, with an installed Arabic font), Hungarian (Magyar) and Turkish (Türkçe), live switching and a remembered Auto/system-language choice; [details](docs/localization.md) |
 | Automation | MCP server, JSON control channel, `cadcraft-cli` (info, convert, run, commands, mcp) |
+| AI | Smart Blocks by exact shape matching, no model: BCONVERT (Convert to Block dialog; `-BCONVERT` at the command line), BSEARCH, BDETECT, BREPLACE (Replace dialog), a Blocks palette that suggests blocks like the selection, and INSERT placement suggestions that follow how the block's other references sit on walls, learned across drawings |
 
 ## Quick start
 
