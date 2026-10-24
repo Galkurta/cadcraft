@@ -1,7 +1,7 @@
 //! Moving drawings in and out: EXPORT (DXF, DWG, SVG, PNG or PDF), IMPORT (the objects of another
 //! DXF/DWG file), PREVIEW (a picture of the plot) and PUBLISH (plot several sheets at once).
-//! ATTACH, SHARE and 3DORBIT are registered so the tool bar and command line say they are not
-//! available yet.
+//! SHARE and 3DORBIT are registered so the tool bar and command line say they are not available
+//! yet (ATTACH is in `attach.rs`).
 //!
 //! Files go through the host's io hooks ([`super::file::io`]) like OPEN and SAVEAS, so the engine
 //! stays I/O-agnostic; the JSON forms never open dialogs (the UI asks for files when these
@@ -54,11 +54,6 @@ pub fn specs() -> Vec<CommandSpec> {
             .alias(&["printpdf", "pdfb"])
             .params("{path?: \"DIR/NAME^NAME2.pdf\" (default: the drawing's file; a `^` splits the name into one book name per row of frames; else returns base64 `data` per book), names?: [book names], frameHeight?: mm (default 297), unit?: mm per drawing unit (default 1)} → {books: [{name, pages, bytes, path? | data}], skipped}: closed polylines of the frame height in model space are sheet frames; each row (same lower edge, bottom to top) is one PDF, its frames left to right one page each on the paper (ISO A-series, either orientation) they match")
             .noundo(),
-        CommandSpec::new("attach", "Attach", |_, _| {
-            Err(EngineError::Other("ATTACH is not available yet: raster images and PDF/DWF/DGN underlays can't be shown yet".into()))
-        })
-        .params("not available yet")
-        .noundo(),
         CommandSpec::new("share", "Share", |_, _| {
             Err(EngineError::Other("SHARE is not available yet: there is no online service to share through; EXPORT or PUBLISH the drawing and send the file".into()))
         })
@@ -793,9 +788,9 @@ mod tests {
     }
 
     #[test]
-    fn attach_share_and_orbit_say_they_are_not_available_yet() {
+    fn share_and_orbit_say_they_are_not_available_yet() {
         let mut s = session();
-        for c in ["attach", "share", "3dorbit", "orbit"] {
+        for c in ["share", "3dorbit", "orbit"] {
             let e = s.execute(&resolve_alias(c), &Value::Null).unwrap_err().to_string();
             assert!(e.contains("not available yet"), "{c}: {e}");
         }
