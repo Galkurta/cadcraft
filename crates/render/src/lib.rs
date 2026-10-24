@@ -11,12 +11,14 @@ pub mod clip;
 mod dim;
 mod fill;
 mod hatch;
+pub mod images;
 mod linetype;
 mod linetype_text;
 mod mline;
 mod outline;
 pub mod paper;
 pub mod pen;
+mod picture;
 mod plotstyle;
 mod point;
 pub mod raster;
@@ -24,6 +26,7 @@ mod text;
 mod tolerance;
 pub mod units;
 mod wide;
+pub use picture::ImageDraw;
 
 use cadcraft_color::{Color, Rgb};
 use cadcraft_doc::{Drawing, Entity, EntityKind, Handle, Lineweight, Prim, Space};
@@ -58,6 +61,9 @@ pub enum Kind {
     Point,
     /// An infinite line or ray: `verts[start]` = base, `verts[start+1]` = unit direction.
     Infinite { ray: bool },
+    /// A raster image or PDF underlay: `images[n]` says what to draw and where (the pixels come
+    /// from [`images`]); `verts[start..start+len]` is its closed outline, for bounds and picking.
+    Image(u32),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -98,6 +104,8 @@ pub struct DisplayList {
     /// Plot style end, join and fill style per primitive (parallel to `prims`; missing entries
     /// are "use object"), turned into geometry by [`pen::apply`].
     pub pens: Vec<Pen>,
+    /// What [`Kind::Image`] primitives draw.
+    pub images: Vec<ImageDraw>,
 }
 
 /// A glyph of plotted text: the font glyph and, in world coordinates, where it sits. It is
@@ -592,10 +600,15 @@ fn append(dst: &mut DisplayList, src: DisplayList) {
     if !src.pens.is_empty() {
         dst.pens.resize(dst.prims.len(), Pen::default());
     }
+    let images = dst.images.len() as u32;
     dst.prims.extend(src.prims.into_iter().map(|mut p| {
         p.start += if matches!(p.kind, Kind::Tris | Kind::Mask) { tris } else { verts };
+        if let Kind::Image(ix) = &mut p.kind {
+            *ix += images;
+        }
         p
     }));
+    dst.images.extend(src.images);
     dst.verts.extend(src.verts);
     dst.tris.extend(src.tris);
     dst.prim_layers.extend(src.prim_layers);
@@ -869,6 +882,17 @@ fn append_clipped(dst: &mut DisplayList, src: &DisplayList, clip: &Clip) {
                         push_raw(dst, p, Kind::Polyline, &piece);
                     }
                 }
+            }
+            (Kind::Image(ix), _) => {
+                let Some(img) = src.images.get(ix as usize) else { continue };
+                let mut img = img.clone();
+                img.clips.push(match clip {
+                    Clip::Rect(r) => vec![r.min, Vec2::new(r.max.x, r.min.y), r.max, Vec2::new(r.min.x, r.max.y)],
+                    Clip::Poly(c) => c.polygon().to_vec(),
+                });
+                let index = dst.images.len() as u32;
+                dst.images.push(img);
+                push_raw(dst, p, Kind::Image(index), pts);
             }
         }
     }
@@ -1221,14 +1245,7 @@ fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
                 b.polyline(ctx, rgb, lw, &pts);
             }
         }
-        EntityKind::Image(i) => {
-            let o = i.insert.xy();
-            let u = i.u.xy() * i.size.x;
-            let v = i.v.xy() * i.size.y;
-            b.polyline(ctx, rgb, lw, &[o, o + u, o + u + v, o + v, o]);
-            b.polyline(ctx, rgb, lw, &[o, o + u + v]);
-            b.polyline(ctx, rgb, lw, &[o + u, o + v]);
-        }
+        EntityKind::Image(i) => picture::draw(b, ctx, i, rgb, lw),
         EntityKind::Table(t) => table(b, ctx, t, rgb, lw),
         EntityKind::Tolerance(t) => tolerance::draw(b, ctx, e, t, lw, tol),
         EntityKind::Leader(l) => {

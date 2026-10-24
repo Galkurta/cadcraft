@@ -26,3 +26,4 @@ quick-xml = { workspace = true }
 # Reads CADCraft's DWG output as written (tests only; the same version as cadcraft-dwg's).
 acadrust = "0.6.5"
 tiny-skia = { workspace = true }
+image = { workspace = true }
