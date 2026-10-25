@@ -175,7 +175,7 @@ presence: an option that prints "not available yet" doesn't count.
 | Hardware | 3% | 45% | 15–25 | estimated | [hardware-parity](hardware-parity.md) |
 | Platforms | 3% | 75% | 15–25 | macOS, Windows (x64/x86/arm64), Linux, FreeBSD, web: more than AutoCAD; but the web build can't open or save files reliably (#55, #133, #134) and has no DWG, and Windows/Linux get little runtime testing | [gaps](gaps.md#platforms) |
 | Localization | 3% | 5% | 60–100 | measured: string catalog with Ukrainian (936 rows, #36); none of AutoCAD for Mac's 7 other languages | [localization-parity](localization-parity.md) |
-| AI features (Autodesk Assistant, Smart Blocks, Markup Assist) | 1% | 64% | 15–30 | Smart Blocks by deterministic shape matching (convert, search, detect, replace, Blocks palette, placement learned across drawings). The in-app Assistant and Markup Assist remain; agent control over MCP is a different strength | [gaps](gaps.md#ai-features) |
+| AI features (Autodesk Assistant, Smart Blocks, Markup Assist) | 1% | 64% | 20–40 | Smart Blocks by deterministic shape matching (convert, search, detect, replace, Blocks palette, placement learned across drawings). The in-app Assistant and Markup Assist remain; agent control over MCP is a different strength | [gaps](gaps.md#ai-features) |
 | **Ready for real work** | 100% | **≈ 38%** | **≈ 1,300–2,100** | | |
 
 The dimension weights describe what decides whether a professional can switch: features and
@@ -224,7 +224,7 @@ DWG/DXF corpus (files from people who own them); black-box checks in AutoCAD of 
 | Date | Change | Summary |
 |---|---|---|
 | 2026-10-22 | minor | Draw row: RECTANG gained a centre construction mode (`Center` keyword, `center: true`) beside its corner mode (#1127); parity percentages and hours not re-measured |
-| 2026-10-24 | minor | AI features 20% → 64% (15–30 h left): Smart Blocks landed (A1). Weight 1%, so ready for real work stays ≈ 38% and the totals are unchanged at their rounding; hours not re-measured |
+| 2026-10-24 | minor | AI features 20% → 64% (20–40 h left, the open A2 and A3 of gaps.md): Smart Blocks landed (A1). Weight 1%, so ready for real work stays ≈ 38% and the totals are unchanged at their rounding (AI hours were 40–80, now 20–40: a 20–40 h drop is within the rounding of ≈ 1,300–2,100); other hours not re-measured |
 | 2026-10-12 | minor | Hatch row evidence: Hatch and Gradient / Hatch Edit dialogs; percentages and hours not re-measured |
 | 2026-10-12 | minor | Blocks row evidence: Block Editor for static blocks (BEDIT, BSAVE, BSAVEAS, BCLOSE); percentages and hours not re-measured |
 | 2026-10-11 | minor | Evidence text of the feature-area rows refreshed for merged work (#397, #406, #408, #417, #420, #433, #448, #451, #453, #459, #468, #507, #510, #525, #534, #546, #547, #558, #563, #564, #567, #571); parity percentages and hours not re-measured |

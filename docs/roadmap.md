@@ -88,7 +88,7 @@ agents that built each milestone, are in the progress log of [ROADMAP.md](../ROA
 | M12 | Automation: AutoLISP, SCRIPT, action recorder, sheet sets, Express Tools | ≈ 15% (MCP, CLI, control channel done) | 130–220 |
 | M13 | 1.0 polish: preferences, workspaces, localisation, accessibility, signed packages, docs | ≈ 15% (signed packages for every platform exist; themes done; string catalog with Ukrainian and German, live language switching, #36) | 110–170 |
 | — | Geometry precision (cross-cutting, see [geometry-parity.md](geometry-parity.md)) | ≈ 40% | 70–110 |
-| — | AI features | ≈ 64% (Smart Blocks are done; the Assistant and Markup Assist remain) | 15–30 |
+| — | AI features | ≈ 64% (Smart Blocks are done; the Assistant and Markup Assist remain) | 20–40 |
 | | **Remaining to full parity** | | **≈ 1,300–2,100** |
 
 Milestone rows overlap a little with the cross-cutting rows; the total is the dimension sum in
@@ -103,7 +103,7 @@ AutoLISP surface, AI features with openly licensed local models, and every remai
 
 | Date | Change | Summary |
 |---|---|---|
-| 2026-10-24 | minor | AI features row ≈ 0% → ≈ 64%: Smart Blocks landed (BCONVERT, BSEARCH, BDETECT, BREPLACE, Blocks palette, INSERT placement suggestions); the Assistant and Markup Assist remain |
+| 2026-10-24 | minor | AI features row ≈ 0% → ≈ 64%: Smart Blocks landed (BCONVERT, BSEARCH, BDETECT, BREPLACE, Blocks palette, INSERT placement suggestions); the Assistant and Markup Assist remain (20–40 h; the drop from 40–80 h is within the rounding of the ≈ 1,300–2,100 total) |
 | 2026-10-12 | minor | Block Editor for static blocks landed: "Use blocks" evidence updated; status and hours unchanged (REFEDIT and dynamic blocks remain) |
 | 2026-10-11 | minor | Alpha-gate evidence refreshed for merged work (#459, #525, #528, #160, #186, #564); statuses and hours unchanged |
 | 2026-10-10 | minor | Merged main: fmt fixed, Ukrainian catalog noted in M13, ready for real work 38% |

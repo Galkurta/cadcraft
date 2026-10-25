@@ -57,7 +57,7 @@ Hours are Opus 5.5 agent wall-clock hours, calibrated on this repo's own build: 
 | Stability | 35% | 30–50 | [gaps.md](docs/gaps.md#stability) |
 | Platforms | 75% | 15–25 | [gaps.md](docs/gaps.md#platforms) |
 | Ecosystem and automation | 10% | 120–200 | [gaps.md](docs/gaps.md#ecosystem-and-automation) |
-| AI features | 64% | 15–30 | [gaps.md](docs/gaps.md#ai-features) |
+| AI features | 64% | 20–40 | [gaps.md](docs/gaps.md#ai-features) |
 
 ## Features
 
@@ -137,7 +137,7 @@ Ranked; detail and the full beta checklist in [docs/roadmap.md](docs/roadmap.md)
 
 | Date | Change | Summary |
 |---|---|---|
-| 2026-10-24 | minor | AI features row and progress log: Smart Blocks |
+| 2026-10-24 | minor | AI features row (20–40 h left, as in gaps.md) and progress log: Smart Blocks; the 20–40 h drop is within the rounding of the remaining total |
 | 2026-10-21 | trivial | Progress log: proxy objects keep their class through a save (#1812) |
 | 2026-10-14 | minor | Progress log: HATCHEDIT boundary add/remove |
 | 2026-10-12 | trivial | Progress log: closed-polyline TRIM (#726) |
