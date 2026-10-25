@@ -639,7 +639,7 @@ fn many_unrelated_lines_stay_within_budget() {
 
 use std::collections::BTreeSet;
 
-use cadcraft_doc::{DimKind, DimMarks, Dimension, Hatch, HatchLoop};
+use cadcraft_doc::{Attrib, DimKind, DimMarks, Dimension, HAlign, Hatch, HatchLoop, Insert, Lineweight, MText, Text, Transparency, VAlign};
 use cadcraft_geom::{Mat3, Spline};
 
 /// Scale by `k`, turn by `deg`, move by `t`; mirrored across the Y axis first when `mirror`.
@@ -976,4 +976,158 @@ fn bconvert_dry_run_counts_without_changing_the_drawing() {
     assert!(s.execute("bconvert", &json!({ "handles": hexes(&a), "dryRun": true, "name": "a*b" })).is_ok());
     assert_eq!((s.doc().unwrap().model.len(), s.state().unwrap().undo.len()), (before, steps));
     assert!(s.doc().unwrap().blocks.values().all(|b| b.anonymous || b.name.starts_with('*')));
+}
+
+// ---------- properties BCONVERT would discard ----------
+
+fn found(s: &mut Session, h: Handle) -> BTreeSet<String> {
+    handle_set(&s.execute("bsearch", &json!({ "handles": [h.hex()] })).unwrap()["handles"])
+}
+
+fn set(hs: &[Handle]) -> BTreeSet<String> {
+    hs.iter().map(|h| h.hex()).collect()
+}
+
+fn text(value: &str, style: &str, halign: HAlign, width_factor: f64) -> Text {
+    let at = Vec3::new(0.0, 0.0, 0.0);
+    let align_pt = (halign != HAlign::Left).then_some(at);
+    Text {
+        insert: at,
+        align_pt,
+        height: 2.5,
+        value: value.into(),
+        rotation: 0.0,
+        width_factor,
+        oblique: 0.0,
+        style: style.into(),
+        halign,
+        valign: VAlign::Baseline,
+    }
+}
+
+#[test]
+fn texts_with_another_style_justification_width_factor_or_oblique_do_not_match() {
+    let mut s = Session::new();
+    let sample = text("ROOM", "Standard", HAlign::Left, 1.0);
+    let h = s.add_entity(EntityKind::Text(sample.clone())).unwrap();
+    let at = |x: f64, deg: f64, t: Text| {
+        let mut k = EntityKind::Text(t);
+        k.transform(&xform(1.0, deg, (x, 0.0), false));
+        k
+    };
+    let same = s.add_entity(at(100.0, 40.0, sample.clone())).unwrap();
+    let mut oblique = sample.clone();
+    oblique.oblique = 0.3;
+    for (i, t) in [
+        text("ROOM", "Notes", HAlign::Left, 1.0),
+        text("ROOM", "Standard", HAlign::Center, 1.0),
+        text("ROOM", "Standard", HAlign::Left, 0.8),
+        oblique,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        s.add_entity(at(200.0 + 100.0 * i as f64, 0.0, t)).unwrap();
+    }
+    // The same style in another case is the same style.
+    let shouting = s.add_entity(at(700.0, 0.0, text("ROOM", "STANDARD", HAlign::Left, 1.0))).unwrap();
+    assert_eq!(found(&mut s, h), set(&[h, same, shouting]));
+    let r = s.execute("bconvert", &json!({ "handles": [h.hex()], "name": "LABEL" })).unwrap();
+    assert_eq!(r["converted"], 3, "{r}");
+}
+
+#[test]
+fn justified_texts_match_by_the_alignment_point_under_the_transform() {
+    let mut s = Session::new();
+    let mut sample = text("ROOM", "Standard", HAlign::Center, 1.0);
+    sample.align_pt = Some(Vec3::new(3.0, 1.0, 0.0));
+    let h = s.add_entity(EntityKind::Text(sample.clone())).unwrap();
+    let turned = put(&mut s, &EntityKind::Text(sample.clone()), &xform(1.0, 70.0, (100.0, 20.0), false));
+    let mut moved = sample;
+    moved.align_pt = Some(Vec3::new(3.0, 4.0, 0.0));
+    let moved = put(&mut s, &EntityKind::Text(moved), &xform(1.0, 70.0, (200.0, 20.0), false));
+    let found = found(&mut s, h);
+    assert!(found.contains(&turned.hex()) && !found.contains(&moved.hex()), "{found:?}");
+}
+
+#[test]
+fn mtexts_with_another_attachment_or_width_do_not_match() {
+    let mut s = Session::new();
+    let m = |attach: u8, width: f64| {
+        EntityKind::MText(MText {
+            insert: Vec3::ZERO,
+            height: 2.5,
+            width,
+            attach,
+            rotation: 0.0,
+            style: "Standard".into(),
+            contents: "NOTE".into(),
+            line_spacing: 1.0,
+            line_spacing_exact: false,
+            columns: None,
+        })
+    };
+    let h = s.add_entity(m(1, 40.0)).unwrap();
+    let same = put(&mut s, &m(1, 40.0), &xform(1.0, 25.0, (100.0, 0.0), false));
+    put(&mut s, &m(5, 40.0), &xform(1.0, 0.0, (200.0, 0.0), false));
+    put(&mut s, &m(1, 50.0), &xform(1.0, 0.0, (300.0, 0.0), false));
+    assert_eq!(found(&mut s, h), set(&[h, same]));
+}
+
+#[test]
+fn lines_differing_only_in_lineweight_ltscale_transparency_or_plot_style_do_not_match() {
+    let mut s = Session::new();
+    let line = EntityKind::Line(Line { a: Vec3::ZERO, b: Vec3::new(10.0, 0.0, 0.0) });
+    let h = s.add_entity(line.clone()).unwrap();
+    let same = put(&mut s, &line, &xform(1.0, 30.0, (100.0, 0.0), false));
+    let edits: [fn(&mut cadcraft_doc::Common); 4] = [
+        |c| c.lineweight = Lineweight::Mm100(50),
+        |c| c.ltscale = 2.0,
+        |c| c.transparency = Transparency::Percent(50),
+        |c| c.plot_style = "Heavy".into(),
+    ];
+    for (i, edit) in edits.into_iter().enumerate() {
+        let o = put(&mut s, &line, &xform(1.0, 0.0, (200.0 + 100.0 * i as f64, 0.0), false));
+        s.doc_mut().unwrap().modify_entity(o, |e| edit(&mut e.common)).unwrap();
+    }
+    assert_eq!(found(&mut s, h), set(&[h, same]));
+}
+
+#[test]
+fn references_with_other_attribute_values_are_not_merged() {
+    let mut s = Session::new();
+    let l = s.add_entity(EntityKind::Line(Line { a: Vec3::ZERO, b: Vec3::new(10.0, 0.0, 0.0) })).unwrap();
+    define(&mut s, "DOOR", &[l]);
+    let att = |tag: &str, value: &str| Attrib {
+        tag: tag.into(),
+        text: text(value, "Standard", HAlign::Left, 1.0),
+        invisible: false,
+        constant: false,
+        prompt: String::new(),
+        props: Default::default(),
+        multiline: None,
+        modes: Default::default(),
+    };
+    let mut at = |x: f64, atts: Vec<Attrib>| {
+        let ins = Insert {
+            block: "DOOR".into(),
+            insert: Vec3::new(x, 0.0, 0.0),
+            scale: Vec3::new(1.0, 1.0, 1.0),
+            rotation: 0.0,
+            attribs: atts,
+            cols: 1,
+            rows: 1,
+            col_spacing: 0.0,
+            row_spacing: 0.0,
+        };
+        s.add_entity(EntityKind::Insert(ins)).unwrap()
+    };
+    let a = at(0.0, vec![att("NO", "101"), att("KIND", "A")]);
+    let b = at(50.0, vec![att("NO", "102"), att("KIND", "A")]);
+    // Same pairs: tags in another case and another order.
+    let c = at(100.0, vec![att("kind", "A"), att("no", "101")]);
+    assert_eq!(found(&mut s, a), set(&[a, c]));
+    let r = s.execute("bconvert", &json!({ "handles": [a.hex()], "name": "DOORS" })).unwrap();
+    assert_eq!(r["converted"], 2, "{r}");
+    assert!(s.doc().unwrap().entity(b).is_some_and(|e| matches!(&e.kind, EntityKind::Insert(i) if i.block == "DOOR")), "the other value stays");
 }

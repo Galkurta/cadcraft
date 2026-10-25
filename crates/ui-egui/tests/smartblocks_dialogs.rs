@@ -212,6 +212,23 @@ fn bconvert_with_nothing_selected_asks_for_objects_first() {
     assert_eq!(h.state().ui.dialog, None);
 }
 
+#[test]
+fn replacing_the_select_a_dialog_waits_for_with_another_command_drops_the_dialog() {
+    let (mut app, a) = app_with_two_copies();
+    app.session.set_selection(Vec::new());
+    app.cmdline("bconvert");
+    assert_eq!(app.session.running.as_ref().map(|r| r.id.as_str()), Some("select"));
+    app.session.start("line").unwrap();
+    assert_eq!(app.session.running.as_ref().map(|r| r.id.as_str()), Some("line"));
+    let mut h = harness(app);
+    h.run_steps(2);
+    h.state_mut().session.input(Input::Cancel).unwrap();
+    h.state_mut().session.set_selection(a);
+    h.run_steps(3);
+    assert_eq!(h.state().ui.dialog, None, "the dialog does not pop up after the other command");
+    assert!(h.state().smart.convert.is_none());
+}
+
 fn define(app: &mut CadApp, name: &str, hs: &[Handle]) {
     app.session.execute("-block", &json!({ "name": name, "base": [0, 0], "handles": hexes(hs) })).unwrap();
 }

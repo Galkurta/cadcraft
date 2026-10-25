@@ -107,14 +107,16 @@ impl Thumbs {
     }
 }
 
-/// Draw `list` fitted into a thumbnail-sized box.
-pub fn paint_thumb(ui: &mut egui::Ui, list: Option<&DisplayList>) {
+/// Draw the preview `list` yields fitted into a thumbnail-sized box; `list` runs only when the
+/// box is visible (an empty placeholder otherwise), so scrolled-away rows build nothing.
+pub fn paint_thumb(ui: &mut egui::Ui, list: impl FnOnce() -> Option<Arc<DisplayList>>) {
     let t = Tokens::get();
     let (rect, _) = ui.allocate_exact_size(THUMB, egui::Sense::hover());
+    let list = if ui.is_rect_visible(rect) { list() } else { None };
     let p = ui.painter_at(rect);
     p.rect_filled(rect, 3.0, t.canvas);
     p.rect_stroke(rect, 3.0, Stroke::new(1.0, t.border), egui::StrokeKind::Inside);
-    if let Some(l) = list.filter(|l| !l.bounds.is_empty() && !l.prims.is_empty()) {
+    if let Some(l) = list.as_deref().filter(|l| !l.bounds.is_empty() && !l.prims.is_empty()) {
         let b = l.bounds;
         let inner = rect.shrink(4.0);
         let (w, h) = (b.width().max(1e-9), b.height().max(1e-9));
@@ -143,8 +145,8 @@ fn open(app: &mut CadApp, kind: Kind) -> Result<Value, String> {
     let selection = app.session.selection();
     if selection.is_empty() {
         // Ask for the objects first (SELECT); the dialog follows when that ends.
-        app.smart.waiting = Some(kind);
         app.session.start("select").map_err(|e| e.to_string())?;
+        app.smart.waiting = Some(kind);
         return Ok(Value::Null);
     }
     open_with(app, kind, &selection);
@@ -181,7 +183,11 @@ fn open_with(app: &mut CadApp, kind: Kind, selection: &[cadcraft_engine::doc::Ha
 /// Every frame: once the SELECT a dialog asked for, or its base point pick, has ended, bring the
 /// dialog back (with the picked point; unchanged when the pick was cancelled).
 pub fn resume(app: &mut CadApp) {
-    if app.session.running.is_some() {
+    if let Some(r) = &app.session.running {
+        // Another command replaced the SELECT the dialog waits for: it no longer follows.
+        if r.id != "select" {
+            app.smart.waiting = None;
+        }
         return;
     }
     if std::mem::take(&mut app.smart.picking) {
@@ -375,8 +381,7 @@ pub fn replace_dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
                     ui.set_min_width(300.0);
                     for (name, distance) in &r.ranking {
                         ui.horizontal(|ui| {
-                            let list = thumbs.get(uid, revision, &doc, name);
-                            paint_thumb(ui, list.as_deref());
+                            paint_thumb(ui, || thumbs.get(uid, revision, &doc, name));
                             let row = ui.selectable_label(r.chosen.as_deref() == Some(name.as_str()), name);
                             if row.clicked() {
                                 r.chosen = Some(name.clone());

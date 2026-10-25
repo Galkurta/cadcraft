@@ -9,7 +9,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use cadcraft_color::Color;
-use cadcraft_doc::{Block, Common, DimKind, Drawing, EntityKind, Handle, Space};
+use cadcraft_doc::{Block, Common, DimKind, Drawing, EntityKind, HAlign, Handle, Lineweight, Space, Transparency};
 use cadcraft_geom::{Arc as GArc, Circle as GCircle, Line as GLine, PolyVertex, Polyline, Segment, TAU, Vec2, norm_angle};
 
 /// Most vertices of a polyline the matcher looks at (a longer one is not a smart-block shape).
@@ -293,13 +293,25 @@ pub fn feat_of(k: &EntityKind) -> Option<Feat> {
         EntityKind::Point(p) => f.pts = vec![p.p.xy()],
         EntityKind::Text(t) => {
             f.tag = Tag::Text;
-            f.pts = vec![t.insert.xy(), t.insert.xy() + Vec2::from_angle(t.rotation) * t.height];
-            f.text = t.value.clone();
+            f.pts = vec![t.insert.xy(), t.insert.xy() + Vec2::from_angle(t.rotation) * t.height, t.justify_point()];
+            // Aligned and fit text are also defined by their second point.
+            if matches!(t.halign, HAlign::Aligned | HAlign::Fit) {
+                f.pts.push(t.align_pt.unwrap_or(t.insert).xy());
+            }
+            f.scal = vec![t.width_factor, t.oblique];
+            f.text = format!("{:?}", (&t.value, t.style.to_ascii_uppercase(), t.halign, t.valign));
         }
         EntityKind::MText(t) => {
             f.tag = Tag::MText;
             f.pts = vec![t.insert.xy(), t.insert.xy() + Vec2::from_angle(t.rotation) * t.height];
-            f.text = t.contents.clone();
+            // Lengths scale with the transform: the reference width and the column geometry.
+            f.rad = vec![t.width];
+            let cols = t.columns.as_ref().map(|c| {
+                f.rad.extend([c.gutter, c.height]);
+                f.rad.extend(&c.heights);
+                (c.kind, c.count, c.auto_height, c.flow_reversed, c.heights.len())
+            });
+            f.text = format!("{:?}", (&t.contents, t.style.to_ascii_uppercase(), t.attach, t.line_spacing.to_bits(), t.line_spacing_exact, cols));
         }
         EntityKind::Insert(i) => {
             if i.rows != 1 || i.cols != 1 {
@@ -308,7 +320,10 @@ pub fn feat_of(k: &EntityKind) -> Option<Feat> {
             f.tag = Tag::Insert;
             let o = i.insert.xy();
             f.pts = vec![o, o + Vec2::new(i.scale.x, 0.0).rotate(i.rotation), o + Vec2::new(0.0, i.scale.y).rotate(i.rotation)];
-            f.text = i.block.to_ascii_uppercase();
+            // Attribute (tag, value) pairs, tags case-insensitive, in tag order.
+            let mut atts: Vec<(String, &str)> = i.attribs.iter().map(|a| (a.tag.to_ascii_uppercase(), a.text.value.as_str())).collect();
+            atts.sort();
+            f.text = format!("{:?}", (i.block.to_ascii_uppercase(), atts));
         }
         _ => return None,
     }
@@ -464,11 +479,29 @@ fn eq_under(s: &Feat, d: &Feat, tol: f64, v: usize) -> bool {
 
 // ---------- the drawing's objects ----------
 
-/// What must agree between two objects of one group besides their shape.
-pub type Style = (String, Color, String);
+/// What must agree between two objects of one group besides their shape: every common property
+/// a conversion to a block would discard.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Style {
+    layer: String,
+    color: Color,
+    linetype: String,
+    lineweight: Lineweight,
+    ltscale: f64,
+    transparency: Transparency,
+    plot_style: String,
+}
 
 pub fn style_of(c: &Common) -> Style {
-    (c.layer.clone(), c.color, c.linetype.clone())
+    Style {
+        layer: c.layer.clone(),
+        color: c.color,
+        linetype: c.linetype.clone(),
+        lineweight: c.lineweight,
+        ltscale: c.ltscale,
+        transparency: c.transparency,
+        plot_style: c.plot_style.clone(),
+    }
 }
 
 #[derive(Clone)]

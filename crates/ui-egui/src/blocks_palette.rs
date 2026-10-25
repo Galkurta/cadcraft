@@ -96,8 +96,7 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
     let mut pick: Option<String> = None;
     let mut row = |ui: &mut egui::Ui, name: &str, note: Option<String>| {
         ui.horizontal(|ui| {
-            let list = thumbs.get(uid, revision, &doc, name);
-            crate::smartblocks_dlg::paint_thumb(ui, list.as_deref());
+            crate::smartblocks_dlg::paint_thumb(ui, || thumbs.get(uid, revision, &doc, name));
             if ui.selectable_label(false, name).on_hover_text(crate::tl!("Insert this block")).clicked() {
                 pick = Some(name.to_string());
             }
